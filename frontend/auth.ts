@@ -69,6 +69,7 @@ if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
 export const config: NextAuthConfig = {
   adapter: PrismaAdapter(prisma),
   providers,
+  debug: true, // TEMPORARY — prints full error stack traces to Vercel logs. Remove once this is diagnosed.
   // Credentials provider is incompatible with database-persisted sessions in
   // Auth.js, so we use JWT sessions everywhere for consistency. The JWT is
   // encrypted (JWE) and HttpOnly/Secure-cookied by NextAuth itself.
@@ -84,7 +85,12 @@ export const config: NextAuthConfig = {
     // touches that path). Idempotent on the backend either way.
     async createUser({ user }) {
       if (!user.id || !user.email) return;
-      await bootstrapOrganization({ userId: user.id, displayName: user.name, email: user.email });
+      try {
+        await bootstrapOrganization({ userId: user.id, displayName: user.name, email: user.email });
+      } catch (err) {
+        console.error("[taskflow] bootstrapOrganization failed in createUser event:", err);
+        throw err;
+      }
     },
   },
   callbacks: {
@@ -106,7 +112,8 @@ export const config: NextAuthConfig = {
             token.activeOrganizationId = memberships[0].organization_id;
             token.activeRole = memberships[0].role;
           }
-        } catch {
+        } catch (err) {
+          console.error("[taskflow] getMembershipsForUser failed in jwt callback:", err);
           // Backend unavailable — keep any previously-cached memberships
           // rather than locking the user out of a page that doesn't need them.
         }
