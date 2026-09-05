@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 222 33% 6%;       /* deep slate, not flat black */
+  --foreground: 210 20% 92%;
+  --card: 222 28% 9%;
+  --card-foreground: 210 20% 92%;
+  --muted: 222 20% 14%;
+  --muted-foreground: 216 12% 62%;
+  --border: 222 18% 18%;
+  --primary: 210 90% 60%;         /* signal blue — compute/infra, not terracotta/acid-green */
+  --primary-foreground: 222 33% 6%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-feature-settings: "cv11", "ss01";
+}
+
+.font-mono-data {
+  font-variant-numeric: tabular-nums;
+}

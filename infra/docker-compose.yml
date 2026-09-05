@@ -1,0 +1,18 @@
+# Local development only. Production should use a managed Postgres
+# (RDS, Neon, Supabase, etc.) — see README.md.
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: taskflow
+      POSTGRES_PASSWORD: taskflow
+      POSTGRES_DB: taskflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - taskflow_pg_data:/var/lib/postgresql/data
+
+volumes:
+  taskflow_pg_data:
