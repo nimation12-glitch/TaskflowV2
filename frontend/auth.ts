@@ -9,10 +9,6 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { bootstrapOrganization, getMembershipsForUser } from "@/lib/backend-internal";
 
-// --- Provider configuration is only wired up when real credentials exist.
-// A provider with missing env vars is simply omitted from the list, so its
-// button never renders — we never fake a working OAuth provider (see
-// docs/AGENTS.md §4).
 const providers: NextAuthConfig["providers"] = [
   Credentials({
     name: "Email and password",
@@ -26,7 +22,7 @@ const providers: NextAuthConfig["providers"] = [
       if (!email || !password) return null;
 
       const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-      if (!user?.passwordHash) return null; // no password set (OAuth-only account)
+      if (!user?.passwordHash) return null;
 
       const valid = await bcrypt.compare(password, user.passwordHash);
       if (!valid) return null;
@@ -41,7 +37,6 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      // Minimal scope — identity only, never Drive/Gmail (docs/AGENTS.md §13).
       authorization: { params: { scope: "openid email profile" } },
     })
   );
@@ -69,20 +64,13 @@ if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
 export const config: NextAuthConfig = {
   adapter: PrismaAdapter(prisma),
   providers,
-  debug: true, // TEMPORARY — prints full error stack traces to Vercel logs. Remove once this is diagnosed.
-  // Credentials provider is incompatible with database-persisted sessions in
-  // Auth.js, so we use JWT sessions everywhere for consistency. The JWT is
-  // encrypted (JWE) and HttpOnly/Secure-cookied by NextAuth itself.
+  debug: true,
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
   pages: {
     signIn: "/login",
-    newUser: "/dashboard", // onboarding lands straight in the just-created workspace
+    newUser: "/dashboard",
   },
   events: {
-    // Fires exactly once, only for OAuth sign-ups where the Prisma adapter
-    // itself inserts the User row. Credentials-based signups create the user
-    // in app/api/signup/route.ts and bootstrap there instead (adapter never
-    // touches that path). Idempotent on the backend either way.
     async createUser({ user }) {
       if (!user.id || !user.email) return;
       try {
@@ -95,18 +83,12 @@ export const config: NextAuthConfig = {
   },
   callbacks: {
     async jwt({ token, user, trigger }) {
-      // On sign-in (or forced refresh), attach this user's organization
-      // memberships so the rest of the app has org/role without a DB hit
-      // on every request. Memberships live in the FastAPI backend, not Prisma.
       if (user?.id) {
         token.userId = user.id;
       }
-      if (user?.id || trigger === "update") {
+      if (user?.id || trigger === "update" || !token.activeOrganizationId) {
         try {
           const memberships = await getMembershipsForUser(token.userId as string);
-          // Default to the first membership (the workspace created at signup).
-          // Full multi-org switching UI can set an explicit activeOrganizationId
-          // via the `update()` trigger later.
           token.memberships = memberships;
           if (!token.activeOrganizationId && memberships.length > 0) {
             token.activeOrganizationId = memberships[0].organization_id;
@@ -114,8 +96,6 @@ export const config: NextAuthConfig = {
           }
         } catch (err) {
           console.error("[taskflow] getMembershipsForUser failed in jwt callback:", err);
-          // Backend unavailable — keep any previously-cached memberships
-          // rather than locking the user out of a page that doesn't need them.
         }
       }
       return token;
