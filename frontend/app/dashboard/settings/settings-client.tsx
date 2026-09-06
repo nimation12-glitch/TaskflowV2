@@ -14,7 +14,8 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DialogTrigger } from "@/components/ui/dialog";
 import { useAction } from "@/lib/hooks/use-action";
 import { formatDate } from "@/lib/utils";
-import { addSshKeyAction, deleteSshKeyAction, validatePublicKey } from "./actions";
+import { addSshKeyAction, deleteSshKeyAction } from "./actions";
+import { validatePublicKey } from "@/lib/ssh-key-validation";
 import type { SshKey } from "@/lib/compute-types";
 
 function CopyCommand({ command }: { command: string }) {
