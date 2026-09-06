@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WalletWidget } from "@/components/dashboard/wallet-widget";
 import { RentalsList } from "@/app/dashboard/compute/rentals-list";
+import { UnavailableNotice } from "@/components/ui/unavailable-notice";
+import { safe } from "@/lib/safe-fetch";
 import { PLAN_LIMITS, type PlanCode } from "@/lib/compute-types";
 
 type OrgSummary = {
@@ -22,12 +24,22 @@ const PLAN_BADGE_VARIANT: Record<PlanCode, "default" | "accent" | "success"> = {
 };
 
 export default async function DashboardOverview() {
-  const [org, wallet, rentals, gpuTypes] = await Promise.all([
-    backendJson<OrgSummary>("/organizations/me"),
-    getWallet(),
-    getRentals(),
-    getGpuTypes(),
+  // org is core session data — if this fails, the whole workspace genuinely can't
+  // render, so it's allowed to throw up to dashboard/error.tsx as before.
+  const org = await backendJson<OrgSummary>("/organizations/me");
+
+  // Compute endpoints are new and may not be live on the backend yet — degrade
+  // this section instead of crashing the whole page if any of them fail.
+  const [walletResult, rentalsResult, gpuTypesResult] = await Promise.all([
+    safe(getWallet(), { balance_micros: 0, estimated_hours_remaining_at_current_rate: null }),
+    safe(getRentals(), []),
+    safe(getGpuTypes(), []),
   ]);
+
+  const computeUnavailable = !walletResult.ok || !rentalsResult.ok || !gpuTypesResult.ok;
+  const wallet = walletResult.data;
+  const rentals = rentalsResult.data;
+  const gpuTypes = gpuTypesResult.data;
 
   const planCode = org.plan?.code ?? "FREE";
   const limits = PLAN_LIMITS[planCode];
@@ -65,6 +77,12 @@ export default async function DashboardOverview() {
           </Link>
         </div>
       </div>
+
+      {computeUnavailable && (
+        <div className="mt-6">
+          <UnavailableNotice label="GPU rental data" />
+        </div>
+      )}
 
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
         <WalletWidget balanceMicros={wallet.balance_micros} estimatedHoursRemaining={wallet.estimated_hours_remaining_at_current_rate} />

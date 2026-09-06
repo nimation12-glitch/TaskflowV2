@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PLAN_LIMITS, type PlanCode } from "@/lib/compute-types";
 import { PlanTiers, ManageBillingButton } from "./billing-client";
+import { safe } from "@/lib/safe-fetch";
 
 type OrgSummary = {
   plan: { code: PlanCode; display_name: string } | null;
@@ -12,10 +13,11 @@ type OrgSummary = {
 };
 
 export default async function BillingPage() {
-  const [org, rentals] = await Promise.all([backendJson<OrgSummary>("/organizations/me"), getRentals()]);
+  const org = await backendJson<OrgSummary>("/organizations/me");
+  const rentalsResult = await safe(getRentals(), []);
   const currentPlan = org.plan?.code ?? "FREE";
   const limits = PLAN_LIMITS[currentPlan];
-  const concurrentUsed = rentals.filter((r) => r.status === "PROVISIONING" || r.status === "RUNNING" || r.status === "STOPPED").length;
+  const concurrentUsed = rentalsResult.data.filter((r) => r.status === "PROVISIONING" || r.status === "RUNNING" || r.status === "STOPPED").length;
 
   return (
     <div className="max-w-3xl">
@@ -43,7 +45,7 @@ export default async function BillingPage() {
             </p>
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 font-mono-data text-xs text-muted-foreground">
               <span>
-                {concurrentUsed}/{limits.concurrentRentals} concurrent rentals used
+                {rentalsResult.ok ? `${concurrentUsed}/${limits.concurrentRentals} concurrent rentals used` : "Concurrent rentals: unavailable"}
               </span>
               <span>{limits.maxStorageGb}GB storage max</span>
               <span>{limits.queuePriority} queue priority</span>

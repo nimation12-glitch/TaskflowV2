@@ -4,12 +4,14 @@ import { getSshKeys } from "@/lib/ssh-keys-client";
 import { getRentals } from "@/lib/compute-client";
 import { SshKeysSection, AccountSection } from "./settings-client";
 import { ROADMAP_ITEMS } from "@/lib/roadmap";
+import { UnavailableNotice } from "@/components/ui/unavailable-notice";
+import { safe } from "@/lib/safe-fetch";
 
 export default async function SettingsPage() {
   const session = await auth();
-  const [keys, rentals] = await Promise.all([getSshKeys(), getRentals()]);
+  const [keysResult, rentalsResult] = await Promise.all([safe(getSshKeys(), []), safe(getRentals(), [])]);
 
-  const activeRentalKeyIds = rentals
+  const activeRentalKeyIds = rentalsResult.data
     .filter((r) => r.status === "RUNNING" || r.status === "PROVISIONING" || r.status === "STOPPED")
     .map((r) => r.ssh_key_id);
 
@@ -20,7 +22,9 @@ export default async function SettingsPage() {
         <p className="mt-1.5 text-sm text-muted-foreground">SSH keys, account, and what's coming next.</p>
       </div>
 
-      <SshKeysSection keys={keys} activeRentalKeyIds={activeRentalKeyIds} />
+      {!keysResult.ok && <UnavailableNotice label="SSH keys" />}
+
+      <SshKeysSection keys={keysResult.data} activeRentalKeyIds={activeRentalKeyIds} />
       <AccountSection email={session?.user?.email ?? "—"} />
 
       <Card>
