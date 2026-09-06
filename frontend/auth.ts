@@ -88,7 +88,15 @@ export const config: NextAuthConfig = {
       }
       if (user?.id || trigger === "update" || !token.activeOrganizationId) {
         try {
-          const memberships = await getMembershipsForUser(token.userId as string);
+          let memberships = await getMembershipsForUser(token.userId as string);
+          if (memberships.length === 0 && token.email) {
+            await bootstrapOrganization({
+              userId: token.userId as string,
+              displayName: (token.name as string) ?? null,
+              email: token.email as string,
+            });
+            memberships = await getMembershipsForUser(token.userId as string);
+          }
           token.memberships = memberships;
           if (!token.activeOrganizationId && memberships.length > 0) {
             token.activeOrganizationId = memberships[0].organization_id;
