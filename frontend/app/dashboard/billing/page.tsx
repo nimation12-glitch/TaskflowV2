@@ -1,86 +1,73 @@
+import Link from "next/link";
 import { backendJson } from "@/lib/backend-client";
+import { getRentals } from "@/lib/compute-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { checkoutSubscriptionAction, checkoutCreditsAction, openBillingPortalAction } from "./actions";
+import { Badge } from "@/components/ui/badge";
+import { PLAN_LIMITS, type PlanCode } from "@/lib/compute-types";
+import { PlanTiers, ManageBillingButton } from "./billing-client";
 
 type OrgSummary = {
-  plan: { code: string; display_name: string; monthly_price_micros: number } | null;
+  plan: { code: PlanCode; display_name: string } | null;
   subscription: { status: string | null; current_period_end: string | null; cancel_at_period_end: boolean } | null;
-  credit_balance_micros: number;
 };
 
-const CREDIT_PACKAGES = [
-  { label: "£10", amountMicros: 10_000_000 },
-  { label: "£25", amountMicros: 25_000_000 },
-  { label: "£50", amountMicros: 50_000_000 },
-  { label: "£100", amountMicros: 100_000_000 },
-];
-
-function formatGbp(micros: number): string {
-  return `£${(micros / 1_000_000).toFixed(2)}`;
-}
-
 export default async function BillingPage() {
-  const org = await backendJson<OrgSummary>("/organizations/me");
+  const [org, rentals] = await Promise.all([backendJson<OrgSummary>("/organizations/me"), getRentals()]);
   const currentPlan = org.plan?.code ?? "FREE";
+  const limits = PLAN_LIMITS[currentPlan];
+  const concurrentUsed = rentals.filter((r) => r.status === "PROVISIONING" || r.status === "RUNNING" || r.status === "STOPPED").length;
 
   return (
     <div className="max-w-3xl">
-      <h1 className="text-2xl font-semibold">Billing</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
+      <p className="mt-1.5 text-sm text-muted-foreground">Manage your plan and payment history. GPU wallet top-ups live on the Compute page.</p>
 
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Current plan</CardTitle>
+          <CardTitle className="text-foreground">Current plan</CardTitle>
         </CardHeader>
-        <CardContent className="flex items-center justify-between">
+        <CardContent className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-lg font-semibold">{org.plan?.display_name ?? "Free"}</p>
-            <p className="text-sm text-muted-foreground">
-              {org.subscription?.status ?? "No active subscription"}
-              {org.subscription?.cancel_at_period_end && " · cancels at period end"}
+            <div className="flex items-center gap-2">
+              <p className="text-lg font-semibold">{org.plan?.display_name ?? "Free"}</p>
+              {org.subscription?.status && (
+                <Badge variant={org.subscription.status === "active" ? "success" : "warning"}>{org.subscription.status}</Badge>
+              )}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {org.subscription?.cancel_at_period_end
+                ? "Cancels at the end of the current period"
+                : org.subscription?.current_period_end
+                  ? `Renews ${new Date(org.subscription.current_period_end).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}`
+                  : "No active subscription"}
             </p>
-            <p className="mt-1 font-mono-data text-sm text-muted-foreground">
-              Balance: {formatGbp(org.credit_balance_micros)}
-            </p>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 font-mono-data text-xs text-muted-foreground">
+              <span>
+                {concurrentUsed}/{limits.concurrentRentals} concurrent rentals used
+              </span>
+              <span>{limits.maxStorageGb}GB storage max</span>
+              <span>{limits.queuePriority} queue priority</span>
+            </div>
           </div>
-          {currentPlan !== "FREE" && (
-            <form action={openBillingPortalAction}>
-              <Button type="submit" variant="secondary">
-                Manage billing
-              </Button>
-            </form>
-          )}
+          {currentPlan !== "FREE" && <ManageBillingButton />}
         </CardContent>
       </Card>
 
-      <h2 className="mt-10 text-sm font-medium text-muted-foreground">Upgrade</h2>
-      <div className="mt-3 grid gap-4 sm:grid-cols-2">
-        {(["PRO", "MAX"] as const).map((plan) => (
-          <Card key={plan}>
-            <CardHeader>
-              <CardTitle className="text-foreground">{plan === "PRO" ? "Pro — £30/mo" : "Max — £90/mo"}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form action={checkoutSubscriptionAction.bind(null, plan)}>
-                <Button type="submit" className="w-full" disabled={currentPlan === plan}>
-                  {currentPlan === plan ? "Current plan" : `Upgrade to ${plan === "PRO" ? "Pro" : "Max"}`}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-        ))}
+      <h2 className="mt-10 text-sm font-medium text-muted-foreground">Plan</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Changing plans opens secure Stripe checkout — nothing changes until payment is confirmed.
+      </p>
+      <div className="mt-3">
+        <PlanTiers currentPlan={currentPlan} />
       </div>
 
-      <h2 className="mt-10 text-sm font-medium text-muted-foreground">Buy credits</h2>
-      <div className="mt-3 grid grid-cols-4 gap-3">
-        {CREDIT_PACKAGES.map((pkg) => (
-          <form key={pkg.label} action={checkoutCreditsAction.bind(null, pkg.amountMicros)}>
-            <Button type="submit" variant="secondary" className="w-full">
-              {pkg.label}
-            </Button>
-          </form>
-        ))}
-      </div>
+      <p className="mt-6 text-xs text-muted-foreground">
+        Need to rent a GPU right now?{" "}
+        <Link href="/dashboard/compute" className="text-primary hover:underline">
+          Go to Compute
+        </Link>
+        .
+      </p>
     </div>
   );
 }

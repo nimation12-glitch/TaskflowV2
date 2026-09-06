@@ -1,72 +1,107 @@
 import Link from "next/link";
+import { Cpu, KeyRound, CreditCard, ArrowUpRight, Sparkles } from "lucide-react";
 import { backendJson } from "@/lib/backend-client";
+import { getGpuTypes, getWallet, getRentals } from "@/lib/compute-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { WalletWidget } from "@/components/dashboard/wallet-widget";
+import { RentalsList } from "@/app/dashboard/compute/rentals-list";
+import { PLAN_LIMITS, type PlanCode } from "@/lib/compute-types";
 
 type OrgSummary = {
   name: string;
   role: string;
-  plan: { code: string; display_name: string; monthly_credit_micros: number } | null;
-  subscription: { status: string | null } | null;
-  credit_balance_micros: number;
+  plan: { code: PlanCode; display_name: string } | null;
 };
 
-function formatGbp(micros: number): string {
-  return `£${(micros / 1_000_000).toFixed(2)}`;
-}
+const PLAN_BADGE_VARIANT: Record<PlanCode, "default" | "accent" | "success"> = {
+  FREE: "default",
+  PRO: "success",
+  MAX: "accent",
+};
 
 export default async function DashboardOverview() {
-  const org = await backendJson<OrgSummary>("/organizations/me");
+  const [org, wallet, rentals, gpuTypes] = await Promise.all([
+    backendJson<OrgSummary>("/organizations/me"),
+    getWallet(),
+    getRentals(),
+    getGpuTypes(),
+  ]);
+
+  const planCode = org.plan?.code ?? "FREE";
+  const limits = PLAN_LIMITS[planCode];
+  const concurrentUsed = rentals.filter((r) => r.status === "PROVISIONING" || r.status === "RUNNING" || r.status === "STOPPED").length;
+  const recentRentals = rentals.slice(0, 3);
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold">{org.name}</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {org.plan?.display_name ?? "Free"} plan · {org.role.toLowerCase()}
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-semibold tracking-tight">{org.name}</h1>
+            <Badge variant={PLAN_BADGE_VARIANT[planCode]}>{org.plan?.display_name ?? "Free"}</Badge>
+          </div>
+          <p className="mt-1.5 text-sm capitalize text-muted-foreground">{org.role.toLowerCase()} on this workspace</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/dashboard/settings">
+            <Button variant="secondary" size="sm">
+              <KeyRound className="h-3.5 w-3.5" />
+              Manage SSH keys
+            </Button>
+          </Link>
+          <Link href="/dashboard/billing">
+            <Button variant="secondary" size="sm">
+              <CreditCard className="h-3.5 w-3.5" />
+              Upgrade plan
+            </Button>
+          </Link>
+          <Link href="/dashboard/compute">
+            <Button size="sm">
+              <Cpu className="h-3.5 w-3.5" />
+              Rent a GPU
+            </Button>
+          </Link>
+        </div>
+      </div>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
+        <WalletWidget balanceMicros={wallet.balance_micros} estimatedHoursRemaining={wallet.estimated_hours_remaining_at_current_rate} />
         <Card>
-          <CardHeader>
-            <CardTitle>Credit balance</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="font-mono-data text-3xl font-semibold">{formatGbp(org.credit_balance_micros)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Monthly allowance</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle>Active rentals</CardTitle>
+            <Cpu className="h-4 w-4 text-accent" strokeWidth={1.75} />
           </CardHeader>
           <CardContent>
             <p className="font-mono-data text-3xl font-semibold">
-              {formatGbp(org.plan?.monthly_credit_micros ?? 0)}
+              {concurrentUsed} <span className="text-lg text-muted-foreground">of {limits.concurrentRentals}</span>
             </p>
+            <p className="mt-1 text-xs text-muted-foreground">Concurrent rentals used on your plan</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle>Subscription status</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle>Current plan</CardTitle>
+            <Sparkles className="h-4 w-4 text-success" strokeWidth={1.75} />
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-semibold">{org.subscription?.status ?? "FREE"}</p>
+            <p className="text-2xl font-semibold">{org.plan?.display_name ?? "Free"}</p>
+            <Link href="/dashboard/billing" className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline">
+              Manage plan <ArrowUpRight className="h-3 w-3" />
+            </Link>
           </CardContent>
         </Card>
       </div>
 
-      <div className="mt-8 flex flex-wrap gap-3">
-        <Link href="/dashboard/api-keys">
-          <Button variant="secondary">Create API key</Button>
+      <div className="mt-8 flex items-center justify-between">
+        <h2 className="text-sm font-medium text-muted-foreground">Recent rentals</h2>
+        <Link href="/dashboard/compute" className="text-xs text-primary hover:underline">
+          View all
         </Link>
-        <Link href="/dashboard/billing">
-          <Button variant="secondary">Buy credits</Button>
-        </Link>
-        <Link href="/dashboard/billing">
-          <Button variant="secondary">Upgrade plan</Button>
-        </Link>
-        <Link href="/dashboard/usage">
-          <Button variant="secondary">View usage</Button>
-        </Link>
+      </div>
+      <div className="mt-3">
+        <RentalsList rentals={recentRentals} gpuTypes={gpuTypes} />
       </div>
     </div>
   );

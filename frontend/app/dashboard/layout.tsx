@@ -1,17 +1,8 @@
 import Link from "next/link";
-import { auth, signOut } from "@/auth";
+import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import { Button } from "@/components/ui/button";
-
-const NAV = [
-  { href: "/dashboard", label: "Overview" },
-  { href: "/dashboard/api-keys", label: "API keys" },
-  { href: "/dashboard/usage", label: "Usage" },
-  { href: "/dashboard/billing", label: "Billing" },
-  { href: "/dashboard/models", label: "Models" },
-  { href: "/dashboard/compute", label: "Compute" },
-  { href: "/dashboard/team", label: "Team" },
-];
+import { Sidebar } from "@/components/dashboard/sidebar";
+import { UserMenu } from "@/components/dashboard/user-menu";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -19,33 +10,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen">
-      <aside className="w-56 shrink-0 border-r border-border p-4">
-        <Link href="/" className="block px-2 text-lg font-semibold">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-border p-4">
+        <Link href="/" className="flex items-center gap-2 px-2 text-[15px] font-semibold tracking-tight">
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
+            <span className="h-2 w-2 rounded-sm bg-current" />
+          </span>
           TaskFlow
         </Link>
-        <nav className="mt-8 flex flex-col gap-1">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="mt-8 border-t border-border pt-4">
-          <p className="truncate px-3 text-xs text-muted-foreground">{session.user?.email}</p>
-          <form
-            action={async () => {
-              "use server";
-              await signOut({ redirectTo: "/" });
-            }}
-          >
-            <Button variant="ghost" type="submit" className="mt-2 w-full justify-start text-sm">
-              Sign out
-            </Button>
-          </form>
+        <Sidebar />
+        <div className="mt-auto border-t border-border pt-3">
+          <UserMenu email={session.user?.email ?? "—"} role={session.activeRole} />
         </div>
       </aside>
       <main className="flex-1 p-8">{children}</main>

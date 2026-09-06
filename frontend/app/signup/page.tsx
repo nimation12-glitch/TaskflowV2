@@ -50,7 +50,7 @@ export default function SignupPage() {
         <CardContent className="pt-6">
           <h1 className="text-xl font-semibold">Create your TaskFlow account</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            You'll get a free workspace with £2 of monthly AI credit to start.
+            You'll get a free workspace with pay-as-you-go GPU rental to start.
           </p>
 
           {error && <p className="mt-4 rounded-md bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>}

@@ -1,20 +1,41 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { backendJson } from "@/lib/backend-client";
+import { getGpuTypes, getWallet, getRentals } from "@/lib/compute-client";
+import { getSshKeys } from "@/lib/ssh-keys-client";
+import { WalletWidget } from "@/components/dashboard/wallet-widget";
+import { RentPanel } from "./rent-panel";
+import { RentalsList } from "./rentals-list";
+import type { PlanCode } from "@/lib/compute-types";
 
-export default function ComputePage() {
+type OrgSummary = { plan: { code: PlanCode } | null };
+
+export default async function ComputePage() {
+  const [gpuTypes, wallet, rentals, sshKeys, org] = await Promise.all([
+    getGpuTypes(),
+    getWallet(),
+    getRentals(),
+    getSshKeys(),
+    backendJson<OrgSummary>("/organizations/me"),
+  ]);
+
+  const plan: PlanCode = org.plan?.code ?? "FREE";
+
+  const concurrentUsed = rentals.filter((r) => r.status === "PROVISIONING" || r.status === "RUNNING" || r.status === "STOPPED").length;
+
   return (
     <div>
-      <h1 className="text-2xl font-semibold">Compute</h1>
-      <Card className="mt-6">
-        <CardContent className="pt-6">
-          <p className="font-medium">Dedicated GPU rental isn't live yet.</p>
-          <p className="mt-2 text-sm text-muted-foreground">
-            This is a later build phase (see the TaskFlow architecture spec, Phase 8/9): GPU catalog, rental,
-            lifecycle management, auto-shutdown, and deployments. It intentionally isn't wired up yet — we don't
-            show fake GPU instances or pricing here. When it ships, you'll be able to rent a GPU, deploy a model,
-            and get a managed API endpoint from this page.
-          </p>
-        </CardContent>
-      </Card>
+      <h1 className="text-2xl font-semibold tracking-tight">Compute</h1>
+      <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">Rent a dedicated GPU by the hour, or book one for a fixed period.</p>
+
+      <div className="mt-6">
+        <WalletWidget balanceMicros={wallet.balance_micros} estimatedHoursRemaining={wallet.estimated_hours_remaining_at_current_rate} />
+      </div>
+
+      <div className="mt-6">
+        <RentPanel gpuTypes={gpuTypes} sshKeys={sshKeys} plan={plan} walletBalanceMicros={wallet.balance_micros} concurrentUsed={concurrentUsed} />
+      </div>
+
+      <h2 className="mt-10 mb-3 text-sm font-medium text-muted-foreground">Your rentals</h2>
+      <RentalsList rentals={rentals} gpuTypes={gpuTypes} />
     </div>
   );
 }
