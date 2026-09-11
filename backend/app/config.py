@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_region: str = "eu-west-2"
 
+    # Separate secret protecting POST /internal/gpu/sweep, called by an
+    # external cron every few minutes. Deliberately distinct from
+    # BACKEND_SERVICE_SECRET so this endpoint isn't reachable via that
+    # more broadly-used secret — see app/api/internal.py.
+    gpu_sweep_service_secret: str = ""
+    gpu_max_runtime_hours_default: int = 48
+    gpu_provisioning_timeout_minutes: int = 10
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
@@ -127,6 +135,15 @@ def validate_production_config(settings: Settings) -> None:
         missing.append("STRIPE_PRICE_PRO")
     if not settings.stripe_price_max:
         missing.append("STRIPE_PRICE_MAX")
+
+    # AWS/GPU rental — no simulated provisioning fallback exists, so the app
+    # must refuse to start rather than silently pretend GPU rental works.
+    if not settings.aws_access_key_id:
+        missing.append("AWS_ACCESS_KEY_ID")
+    if not settings.aws_secret_access_key:
+        missing.append("AWS_SECRET_ACCESS_KEY")
+    if not settings.gpu_sweep_service_secret or len(settings.gpu_sweep_service_secret) < 32:
+        missing.append("GPU_SWEEP_SERVICE_SECRET (must be a long random string)")
 
     if settings.email_provider == "console":
         missing.append("EMAIL_PROVIDER must not be 'console' in production (set 'smtp' and SMTP_* vars)")

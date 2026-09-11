@@ -24,11 +24,11 @@ const PLAN_BADGE_VARIANT: Record<PlanCode, "default" | "accent" | "success"> = {
 };
 
 export default async function DashboardOverview() {
-  // org is core session data — if this fails, the whole workspace genuinely can't
-  // render, so it's allowed to throw up to dashboard/error.tsx as before.
+  // org is core session data — if this fails, the workspace genuinely can't render,
+  // so it's allowed to throw up to dashboard/error.tsx as before.
   const org = await backendJson<OrgSummary>("/organizations/me");
 
-  // Compute endpoints are new and may not be live on the backend yet — degrade
+  // Compute endpoints are newer and may not be live on the backend yet — degrade
   // this section instead of crashing the whole page if any of them fail.
   const [walletResult, rentalsResult, gpuTypesResult] = await Promise.all([
     safe(getWallet(), { balance_micros: 0, estimated_hours_remaining_at_current_rate: null }),

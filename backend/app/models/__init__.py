@@ -23,3 +23,11 @@ from app.models.catalog import (  # noqa: F401
     ModelPricing,
 )
 from app.models.usage import UsageEvent, UsageEventStatus  # noqa: F401
+from app.models.compute import (  # noqa: F401
+    GpuType,
+    GpuInstance,
+    GpuInstanceStatus,
+    PaymentMode,
+    BookingDuration,
+    SshKey,
+)

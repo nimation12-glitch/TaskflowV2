@@ -5,8 +5,9 @@ import type { GpuTier, WalletSummary, Rental } from "@/lib/compute-types";
 // NOTE: this file assumes the /compute/* backend contract from the spec.
 // Every call is isolated here so response-shape changes only need edits in this file.
 
-export function getGpuTypes() {
-  return backendJson<GpuTier[]>("/compute/gpu-types");
+export async function getGpuTypes() {
+  const res = await backendJson<{ gpu_types: GpuTier[] }>("/compute/gpu-types");
+  return res.gpu_types;
 }
 
 export function getWallet() {
@@ -20,8 +21,9 @@ export function topUpWallet(amountMicros: number) {
   });
 }
 
-export function getRentals() {
-  return backendJson<Rental[]>("/compute/rentals");
+export async function getRentals() {
+  const res = await backendJson<{ rentals: Rental[] }>("/compute/rentals");
+  return res.rentals;
 }
 
 export function createRental(input: {

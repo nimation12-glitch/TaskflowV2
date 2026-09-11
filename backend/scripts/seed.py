@@ -17,9 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.database import SessionLocal
 from app.models.billing import Plan, PlanCode
 from app.models.catalog import AiModel, HostingMode, ModelEntitlement, ModelPricing, ModelStatus, Provider, ProviderKind
+from app.models.compute import GpuType
 from app.providers.registry import configured_providers
 
 PLAN_DEFAULTS = [
@@ -27,31 +29,105 @@ PLAN_DEFAULTS = [
         code=PlanCode.FREE,
         display_name="Free",
         monthly_price_micros=0,
-        monthly_credit_micros=2_000_000,
+        monthly_credit_micros=0,  # was 2_000_000 (£2) — leftover from the old AI-credit
+        # design. Now that this ledger funds real AWS GPU spend, a free automatic grant
+        # with no payment method on file is a real, repeatable drain on non-renewable
+        # funding (multiple free signups = free AWS money). Free plan's benefit is
+        # access to rent (1 concurrent, 50GB, standard rates) — not free wallet balance.
+        # Wallet must be funded via a real Stripe top-up before any rental, all plans.
         rate_limit_rpm=20,
         compute_priority=0,
         max_members=3,
-        allows_gpu_rental=False,
+        allows_gpu_rental=True,
+        gpu_max_concurrent_rentals=1,
+        gpu_max_storage_gb=50,
+        gpu_max_session_hours=4,
+        gpu_booking_allowed=False,
+        gpu_max_booking_days=0,
+        gpu_rate_bps=10_000,
     ),
     dict(
         code=PlanCode.PRO,
         display_name="Pro",
         monthly_price_micros=30_000_000,
-        monthly_credit_micros=15_000_000,
+        monthly_credit_micros=0,  # was 15_000_000 (£15) — same leftover-credit issue as
+        # Free. Pro's value is the 10% rate discount + higher limits/priority, not a
+        # monthly wallet stipend that could exceed the £30 subscription fee in AWS cost.
         rate_limit_rpm=100,
         compute_priority=1,
         max_members=10,
         allows_gpu_rental=True,
+        gpu_max_concurrent_rentals=3,
+        gpu_max_storage_gb=250,
+        gpu_max_session_hours=24 * 7,
+        gpu_booking_allowed=True,
+        gpu_max_booking_days=7,
+        gpu_rate_bps=9_000,
     ),
     dict(
         code=PlanCode.MAX,
         display_name="Max",
         monthly_price_micros=90_000_000,
-        monthly_credit_micros=50_000_000,
+        monthly_credit_micros=0,  # was 50_000_000 (£50) — same fix, see Pro's comment above.
         rate_limit_rpm=300,
         compute_priority=2,
         max_members=25,
         allows_gpu_rental=True,
+        gpu_max_concurrent_rentals=10,
+        gpu_max_storage_gb=500,
+        gpu_max_session_hours=24 * 14,
+        gpu_booking_allowed=True,
+        gpu_max_booking_days=14,
+        gpu_rate_bps=8_000,
+    ),
+]
+
+# Matches frontend/lib/gpu-catalog-reference.ts exactly. AMI_ID and AWS_REGION
+# are intentionally left for the founder to fill in per environment — real
+# AMI IDs are region- and time-specific, and this seed script should never
+# fabricate one. GpuType.enabled defaults to False until ami_id is set and
+# reviewed, mirroring the AiModel NOT_CONFIGURED gating pattern below: never
+# silently present a tier that can't actually be provisioned.
+GPU_TYPE_DEFAULTS = [
+    dict(
+        slug="starter",
+        display_name="Starter",
+        gpu_label="NVIDIA T4",
+        aws_instance_type="g4dn.xlarge",
+        vram_gb=16,
+        vcpu=4,
+        ram_gb=16,
+        price_micros_per_hour=750_000,
+    ),
+    dict(
+        slug="standard",
+        display_name="Standard",
+        gpu_label="NVIDIA A10G",
+        aws_instance_type="g5.xlarge",
+        vram_gb=24,
+        vcpu=4,
+        ram_gb=16,
+        price_micros_per_hour=1_400_000,
+    ),
+    dict(
+        slug="performance",
+        display_name="Performance",
+        gpu_label="NVIDIA A10G",
+        aws_instance_type="g5.2xlarge",
+        vram_gb=24,
+        vcpu=8,
+        ram_gb=32,
+        price_micros_per_hour=1_700_000,
+    ),
+    dict(
+        slug="max",
+        display_name="Max",
+        gpu_label="NVIDIA A10G",
+        aws_instance_type="g5.4xlarge",
+        vram_gb=24,
+        vcpu=16,
+        ram_gb=64,
+        price_micros_per_hour=2_250_000,
     ),
 ]
 
@@ -107,6 +183,16 @@ def run():
                     setattr(existing, k, v)
             else:
                 db.add(Plan(**defaults))
+        db.commit()
+
+        settings = get_settings()
+        for defaults in GPU_TYPE_DEFAULTS:
+            existing_gt = db.execute(select(GpuType).where(GpuType.slug == defaults["slug"])).scalar_one_or_none()
+            if existing_gt:
+                for k, v in defaults.items():
+                    setattr(existing_gt, k, v)
+            else:
+                db.add(GpuType(aws_region=settings.aws_region, ami_id=None, enabled=False, **defaults))
         db.commit()
 
         configured = set(configured_providers())
@@ -173,6 +259,10 @@ def run():
         db.commit()
         print("Seed complete.")
         print(f"Configured providers: {sorted(configured) or '(none — set provider API keys in .env)'}")
+        print(
+            "GPU types seeded but all disabled by default — set GpuType.ami_id and "
+            "enabled=True per tier once you've picked a real AMI for your region."
+        )
     finally:
         db.close()
 

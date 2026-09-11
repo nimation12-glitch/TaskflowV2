@@ -39,6 +39,19 @@ class Plan(UUIDPKMixin, TimestampMixin, Base):
     allows_gpu_rental: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     stripe_price_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
+    # --- GPU rental limits (see app/services/gpu_rentals.py — always enforced
+    # server-side, never trust the frontend's greying-out alone) ---
+    gpu_max_concurrent_rentals: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    gpu_max_storage_gb: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Hard ceiling on a single pay-as-you-go session's runtime. NULL = no
+    # plan-specific cap beyond GPU_MAX_RUNTIME_HOURS_DEFAULT / GpuType override.
+    gpu_max_session_hours: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    gpu_booking_allowed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    gpu_max_booking_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Basis points applied to the base hourly rate, e.g. 10000 = no discount,
+    # 9000 = 10% off, 8000 = 20% off. Matches frontend's PLAN_LIMITS.ratesMultiplier.
+    gpu_rate_bps: Mapped[int] = mapped_column(Integer, default=10_000, nullable=False)
+
 
 class SubscriptionStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"

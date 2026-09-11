@@ -5,7 +5,21 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import api_keys, billing, gateway, internal, models_catalog, organizations, team, usage, webhooks
+from app.api import (
+    api_keys,
+    billing,
+    gateway,
+    gpu_catalog,
+    internal,
+    models_catalog,
+    organizations,
+    rentals,
+    ssh_keys,
+    team,
+    usage,
+    wallet,
+    webhooks,
+)
 from app.config import get_settings, validate_production_config
 
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +43,7 @@ app.add_middleware(
 )
 
 app.include_router(internal.router)
+app.include_router(internal.gpu_sweep_router)
 app.include_router(organizations.router)
 app.include_router(api_keys.router)
 app.include_router(team.router)
@@ -37,6 +52,10 @@ app.include_router(usage.router)
 app.include_router(models_catalog.router)
 app.include_router(webhooks.router)
 app.include_router(gateway.router)
+app.include_router(gpu_catalog.router)
+app.include_router(wallet.router)
+app.include_router(ssh_keys.router)
+app.include_router(rentals.router)
 
 
 @app.get("/health")

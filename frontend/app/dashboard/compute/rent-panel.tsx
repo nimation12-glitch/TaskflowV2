@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Cpu, KeyRound, AlertTriangle } from "lucide-react";
+import { Cpu, KeyRound, AlertTriangle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useAction } from "@/lib/hooks/use-action";
 import { formatGbp } from "@/lib/utils";
 import { priceBreakdown, bookingTotalMicros, estimatedHoursRemaining } from "@/lib/gpu-pricing";
@@ -113,7 +114,19 @@ export function RentPanel({
 
         {/* Storage selector */}
         <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Storage</p>
+          <div className="mb-2 flex items-center gap-1.5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Storage</p>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" className="text-muted-foreground hover:text-foreground">
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">
+                First 100GB is included in the base rate. Extra storage adds £0.03/hr per 100GB block beyond that.
+              </TooltipContent>
+            </Tooltip>
+          </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {STORAGE_OPTIONS.map((opt) => {
               const allowed = opt.gb <= limits.maxStorageGb;

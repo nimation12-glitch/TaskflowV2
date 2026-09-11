@@ -6,7 +6,7 @@ pretending to succeed.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import stripe
 from sqlalchemy import select
@@ -23,6 +23,7 @@ from app.models.billing import (
     Subscription,
     SubscriptionStatus,
 )
+from app.models.compute import BookingDuration, GpuInstance, GpuInstanceStatus, SshKey
 from app.models.org import Organization
 from app.services import credits as credits_service
 
@@ -121,6 +122,118 @@ def create_credit_purchase_checkout_session(
     return session["url"]
 
 
+def _existing_stripe_customer_id(db: Session, org: Organization) -> str | None:
+    row = db.execute(select(StripeCustomer).where(StripeCustomer.organization_id == org.id)).scalar_one_or_none()
+    return row.stripe_customer_id if row else None
+
+
+def _backfill_stripe_customer(db: Session, org_id: uuid.UUID, session: dict) -> None:
+    """
+    The wallet-topup/GPU-booking flows below don't have an email to pass
+    up front — the frontend's topUpWallet()/createRental() calls carry none,
+    since identity lives in a separate Next.js/Prisma database and the
+    backend JWT only carries sub/org_id/role. So unlike
+    create_subscription_checkout_session/create_credit_purchase_checkout_session,
+    we can't call get_or_create_stripe_customer before checkout. Instead we
+    reuse an existing customer if this org already has one, and otherwise
+    ask Stripe to create one during checkout (customer_creation="always"),
+    persisting it here once the webhook confirms payment so a later top-up
+    or the billing portal can reuse it.
+    """
+    customer_id = session.get("customer")
+    if not customer_id:
+        return
+    existing = db.execute(select(StripeCustomer).where(StripeCustomer.organization_id == org_id)).scalar_one_or_none()
+    if existing:
+        return
+    db.add(StripeCustomer(organization_id=org_id, stripe_customer_id=customer_id))
+    db.flush()
+
+
+def create_wallet_topup_checkout_session(db: Session, org: Organization, amount_micros: int) -> str:
+    """
+    Wallet top-ups reuse the exact same Stripe Price IDs and package amounts
+    as the legacy credit purchase flow (STRIPE_PRICE_CREDIT_10/25/50/100) —
+    the underlying ledger mechanism is unchanged, only the user-facing label
+    is "wallet" now.
+    """
+    client = _client()
+    attr_name = CREDIT_PACKAGE_PRICE_IDS.get(amount_micros)
+    if not attr_name:
+        raise ValueError("Unsupported wallet top-up amount")
+    price_id = getattr(settings, attr_name)
+    if not price_id:
+        raise BillingNotConfiguredError(f"No Stripe price configured for wallet top-up amount {amount_micros}")
+
+    session_kwargs: dict = dict(
+        mode="payment",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{settings.app_base_url}/dashboard/compute?checkout=success",
+        cancel_url=f"{settings.app_base_url}/dashboard/compute?checkout=cancelled",
+        metadata={
+            "organization_id": str(org.id),
+            "purchase_type": "wallet_topup",
+            "amount_micros": str(amount_micros),
+        },
+    )
+    existing_customer_id = _existing_stripe_customer_id(db, org)
+    if existing_customer_id:
+        session_kwargs["customer"] = existing_customer_id
+    else:
+        session_kwargs["customer_creation"] = "always"
+
+    session = client.checkout.Session.create(**session_kwargs)
+    return session["url"]
+
+
+def create_gpu_booking_checkout_session(
+    db: Session, org: Organization, instance: GpuInstance, gpu_type, amount_micros: int
+) -> str:
+    """
+    Booking totals are dynamic (tier x duration x storage add-on), so unlike
+    subscriptions/credit packages this uses an ad hoc Stripe price_data line
+    item rather than a pre-created Price ID. Metadata carries the pending
+    GpuInstance.id so the webhook can find and provision it — see
+    handle_checkout_completed's "gpu_booking" branch, which is idempotency-
+    guarded against webhook retries (a retry must never double-provision).
+    """
+    client = _client()
+    if amount_micros <= 0:
+        raise ValueError("Booking amount must be positive")
+    amount_pence = amount_micros // 10_000  # micro-GBP -> pence (inverse of handle_invoice_paid's conversion)
+
+    duration_label = "24 hours" if instance.booking_duration == BookingDuration.DAY else "7 days"
+
+    session_kwargs: dict = dict(
+        mode="payment",
+        line_items=[
+            {
+                "price_data": {
+                    "currency": "gbp",
+                    "product_data": {"name": f"{gpu_type.display_name} GPU booking — {duration_label}"},
+                    "unit_amount": amount_pence,
+                },
+                "quantity": 1,
+            }
+        ],
+        success_url=f"{settings.app_base_url}/dashboard/compute?checkout=success",
+        cancel_url=f"{settings.app_base_url}/dashboard/compute?checkout=cancelled",
+        metadata={
+            "organization_id": str(org.id),
+            "purchase_type": "gpu_booking",
+            "gpu_instance_id": str(instance.id),
+        },
+    )
+    existing_customer_id = _existing_stripe_customer_id(db, org)
+    if existing_customer_id:
+        session_kwargs["customer"] = existing_customer_id
+    else:
+        session_kwargs["customer_creation"] = "always"
+
+    session = client.checkout.Session.create(**session_kwargs)
+    return session["url"]
+
+
 def create_billing_portal_session(db: Session, org: Organization) -> str:
     client = _client()
     existing = db.execute(
@@ -189,6 +302,68 @@ def handle_checkout_completed(db: Session, event: dict) -> None:
         # customer.subscription.updated + invoice.paid, handled below,
         # since those carry the authoritative period dates.
         pass
+    elif purchase_type == "wallet_topup":
+        amount_micros = int(metadata.get("amount_micros", "0"))
+        if amount_micros <= 0:
+            return
+        _backfill_stripe_customer(db, org_id, session)
+        credits_service.record_transaction(
+            db,
+            organization_id=org_id,
+            type=CreditTransactionType.PURCHASE,
+            amount_micros=amount_micros,
+            description=f"Wallet top-up (£{amount_micros / 1_000_000:.2f})",
+            stripe_event_id=event["id"],
+            stripe_payment_intent_id=session.get("payment_intent"),
+            stripe_checkout_session_id=session.get("id"),
+        )
+    elif purchase_type == "gpu_booking":
+        gpu_instance_id_raw = metadata.get("gpu_instance_id")
+        if not gpu_instance_id_raw:
+            return
+        instance = db.get(GpuInstance, uuid.UUID(gpu_instance_id_raw))
+        if instance is None:
+            return
+        if instance.status != GpuInstanceStatus.PENDING_PAYMENT:
+            # Idempotency guard: a webhook retry (or a replayed event) must
+            # never double-provision an already-provisioned booking.
+            return
+
+        _backfill_stripe_customer(db, org_id, session)
+
+        hours = 24 if instance.booking_duration == BookingDuration.DAY else 24 * 7
+        instance.booking_expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+
+        from app.compute import aws_provider
+        from app.services import ssh_keys as ssh_key_service
+
+        ssh_key = db.get(SshKey, instance.ssh_key_id)
+        try:
+            aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(db, ssh_key)
+            aws_instance_id, _initial_state = aws_provider.launch_instance(
+                instance.gpu_type,
+                instance.storage_gb,
+                aws_key_pair_name,
+                tags={
+                    "Name": f"taskflow-{instance.id}",
+                    "taskflow:gpu_instance_id": str(instance.id),
+                    "taskflow:organization_id": str(org_id),
+                },
+            )
+        except aws_provider.AwsProviderError as exc:
+            # Stripe has already captured payment at this point. A failed
+            # provisioning after payment needs a human to refund via the
+            # Stripe dashboard — this is not built as an automatic refund
+            # flow. Never silently pretend the booking succeeded.
+            instance.status = GpuInstanceStatus.FAILED
+            instance.error_detail = f"Provisioning failed after payment — needs manual refund review: {exc}"[:500]
+            db.flush()
+            return
+
+        instance.aws_instance_id = aws_instance_id
+        instance.status = GpuInstanceStatus.PROVISIONING
+        instance.provisioning_started_at = datetime.now(timezone.utc)
+        db.flush()
 
 
 def _sync_subscription_row(db: Session, org_id: uuid.UUID, stripe_sub: dict) -> Subscription:
