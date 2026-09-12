@@ -93,7 +93,7 @@ export default function LandingPage() {
             TaskFlow gives you a real GPU instance in minutes — pay-as-you-go from a reloadable wallet, or lock in a
             fixed price with a day or week booking. No pre-paid AI credits, no idle infrastructure.
           </p>
-          <div className="mt-8 flex justify-center gap-3">
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link href="/signup">
               <Button className="px-6 py-3 text-base">Create free account</Button>
             </Link>

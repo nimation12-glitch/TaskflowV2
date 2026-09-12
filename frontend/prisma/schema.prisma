@@ -29,6 +29,14 @@ model User {
   // Users who only use OAuth have no row here at all.
   passwordHash  String?
 
+  // Platform-admin flag. Claim-only: there is no API or UI that lets a user
+  // set this on themselves or anyone else. It's set directly in the database
+  // at issuance time (see scripts/set-platform-admin.ts) and is read
+  // server-side (lib/platform-admin.ts) to decide the is_platform_admin
+  // claim on the backend JWT and to gate the /dashboard/admin/* UI. Never
+  // exposed to or trusted from the client.
+  isPlatformAdmin Boolean @default(false)
+
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

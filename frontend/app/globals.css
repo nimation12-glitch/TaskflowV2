@@ -34,7 +34,10 @@ html {
 }
 
 body {
-  background: hsl(var(--background));
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, hsl(var(--primary) / 0.08), transparent),
+    hsl(var(--background));
+  background-attachment: fixed;
   color: hsl(var(--foreground));
   font-feature-settings: "cv11", "ss01";
 }

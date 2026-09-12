@@ -1,6 +1,7 @@
 import "server-only";
 import { auth } from "@/auth";
 import { signBackendToken } from "@/lib/internal-jwt";
+import { isPlatformAdmin } from "@/lib/platform-admin";
 
 export class UnauthenticatedError extends Error {}
 export class NoActiveOrganizationError extends Error {}
@@ -16,10 +17,13 @@ export async function backendFetch(path: string, init?: RequestInit): Promise<Re
   if (!session?.user?.id) throw new UnauthenticatedError();
   if (!session.activeOrganizationId || !session.activeRole) throw new NoActiveOrganizationError();
 
+  const admin = await isPlatformAdmin(session.user.id);
+
   const token = await signBackendToken({
     userId: session.user.id,
     organizationId: session.activeOrganizationId,
     role: session.activeRole,
+    isPlatformAdmin: admin,
   });
 
   const base = process.env.BACKEND_URL;

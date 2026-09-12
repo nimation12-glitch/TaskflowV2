@@ -1,4 +1,4 @@
-import { LayoutDashboard, CreditCard, Boxes, Cpu, Users, Settings } from "lucide-react";
+import { LayoutDashboard, CreditCard, Boxes, Cpu, Users, Settings, ShieldCheck } from "lucide-react";
 
 export const NAV = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
@@ -8,3 +8,5 @@ export const NAV = [
   { href: "/dashboard/team", label: "Team", icon: Users, exact: false },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, exact: false },
 ] as const;
+
+export const ADMIN_NAV_ITEM = { href: "/dashboard/admin", label: "Admin", icon: ShieldCheck, exact: false } as const;

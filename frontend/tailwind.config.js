@@ -36,6 +36,8 @@ module.exports = {
         "accordion-down": { from: { height: "0" }, to: { height: "var(--radix-accordion-content-height)" } },
         "accordion-up": { from: { height: "var(--radix-accordion-content-height)" }, to: { height: "0" } },
         shimmer: { "0%": { backgroundPosition: "-400px 0" }, "100%": { backgroundPosition: "400px 0" } },
+        "sheet-in-left": { from: { transform: "translateX(-100%)" }, to: { transform: "translateX(0)" } },
+        "sheet-out-left": { from: { transform: "translateX(0)" }, to: { transform: "translateX(-100%)" } },
       },
       animation: {
         "toast-in": "toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -45,6 +47,8 @@ module.exports = {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         shimmer: "shimmer 1.6s ease-in-out infinite",
+        "sheet-in-left": "sheet-in-left 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+        "sheet-out-left": "sheet-out-left 0.2s ease-in forwards",
       },
     },
   },
