@@ -3,21 +3,23 @@
 @tailwind utilities;
 
 :root {
-  --background: 222 33% 6%;       /* deep slate, not flat black */
-  --foreground: 210 20% 92%;
-  --card: 222 28% 9%;
-  --card-foreground: 210 20% 92%;
-  --popover: 222 30% 10%;
-  --popover-foreground: 210 20% 92%;
-  --muted: 222 20% 14%;
-  --muted-foreground: 216 12% 62%;
-  --border: 222 18% 18%;
-  --primary: 210 90% 60%;         /* signal blue — compute/infra, not terracotta/acid-green */
-  --primary-foreground: 222 33% 6%;
-  --accent: 258 60% 66%;          /* violet — reserved for the top plan tier and secondary data series */
-  --accent-foreground: 222 33% 6%;
-  --success: 158 62% 45%;
-  --success-foreground: 222 33% 6%;
+  --background: 222 45% 6%;       /* deep navy — secondary dark blue as the base tone */
+  --foreground: 210 30% 95%;
+  --card: 222 40% 10%;
+  --card-foreground: 210 30% 95%;
+  --popover: 222 42% 11%;
+  --popover-foreground: 210 30% 95%;
+  --muted: 220 35% 15%;
+  --muted-foreground: 215 18% 66%;
+  --border: 220 30% 20%;
+  --primary: 217 91% 60%;         /* primary blue */
+  --primary-foreground: 210 40% 98%;
+  --secondary: 220 65% 22%;       /* secondary dark blue */
+  --secondary-foreground: 210 30% 95%;
+  --accent: 74 85% 55%;           /* lime yellow — premium tier, highlights, secondary chart series */
+  --accent-foreground: 90 45% 12%;
+  --success: 152 55% 38%;         /* dark green */
+  --success-foreground: 150 45% 96%;
   --warning: 38 92% 58%;
   --warning-foreground: 222 33% 6%;
   --danger: 356 75% 58%;
