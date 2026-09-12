@@ -35,7 +35,7 @@ export default function ResetPasswordPage({ params }: { params: { token: string 
       <Card className="w-full max-w-sm">
         <CardContent className="pt-6">
           <h1 className="text-xl font-semibold">Set a new password</h1>
-          {error && <p className="mt-4 rounded-md bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>}
+          {error && <p className="mt-4 rounded-md bg-danger/10 border border-danger/30 px-3 py-2 text-sm text-danger">{error}</p>}
           {done ? (
             <p className="mt-4 text-sm text-muted-foreground">Password updated. Redirecting to sign in…</p>
           ) : (

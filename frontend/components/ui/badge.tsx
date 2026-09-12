@@ -1,10 +1,11 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-type Variant = "default" | "success" | "warning" | "danger" | "accent" | "outline";
+type Variant = "default" | "secondary" | "success" | "warning" | "danger" | "accent" | "outline";
 
 const variantClasses: Record<Variant, string> = {
   default: "bg-muted text-foreground border-transparent",
+  secondary: "bg-secondary text-secondary-foreground border-transparent",
   success: "bg-success/15 text-success border-success/30",
   warning: "bg-warning/15 text-warning border-warning/30",
   danger: "bg-danger/15 text-danger border-danger/30",
@@ -36,6 +37,7 @@ export function Badge({
 export function StatusDot({ variant = "default", className }: { variant?: Variant; className?: string }) {
   const dotColor: Record<Variant, string> = {
     default: "bg-muted-foreground",
+    secondary: "bg-secondary-foreground",
     success: "bg-success",
     warning: "bg-warning",
     danger: "bg-danger",
