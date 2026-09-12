@@ -7,7 +7,7 @@ type Size = "default" | "sm" | "lg" | "icon";
 
 const variantClasses: Record<Variant, string> = {
   primary: "bg-primary text-primary-foreground shadow-md shadow-primary/25 hover:shadow-lg hover:shadow-primary/30 hover:brightness-110 active:brightness-95",
-  secondary: "bg-secondary text-secondary-foreground shadow-sm shadow-black/20 hover:brightness-125 border border-border",
+  secondary: "bg-muted text-foreground shadow-sm shadow-black/10 hover:bg-muted/70 border border-border",
   ghost: "hover:bg-muted/60",
   danger: "bg-danger text-white shadow-md shadow-danger/25 hover:shadow-lg hover:shadow-danger/30 hover:brightness-110 active:brightness-95",
   outline: "border border-border bg-transparent hover:bg-muted/40",

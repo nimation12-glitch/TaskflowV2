@@ -53,7 +53,7 @@ export default function SignupPage() {
             You'll get a free workspace with pay-as-you-go GPU rental to start.
           </p>
 
-          {error && <p className="mt-4 rounded-md bg-danger/10 border border-danger/30 px-3 py-2 text-sm text-danger">{error}</p>}
+          {error && <p className="mt-4 rounded-md bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>}
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
             <div className="space-y-1.5">

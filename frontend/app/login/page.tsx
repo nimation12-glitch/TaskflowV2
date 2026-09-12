@@ -26,7 +26,7 @@ export default async function LoginPage({ searchParams }: { searchParams: { call
           <p className="mt-1 text-sm text-muted-foreground">Access your dashboard, API keys, and usage.</p>
 
           {searchParams.error && (
-            <p className="mt-4 rounded-md bg-danger/10 border border-danger/30 px-3 py-2 text-sm text-danger">
+            <p className="mt-4 rounded-md bg-red-950 px-3 py-2 text-sm text-red-300">
               Sign-in failed. Check your details and try again.
             </p>
           )}
