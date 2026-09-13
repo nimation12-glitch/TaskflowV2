@@ -158,3 +158,8 @@ class CreditTransaction(UUIDPKMixin, Base):
     stripe_payment_intent_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     stripe_checkout_session_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     usage_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    # Set only for CreditTransactionType.GPU_USAGE rows (see gpu_billing.py).
+    # No hard FK, matching usage_event_id above — this table is a
+    # high-volume ledger and both fields are optional traceability links,
+    # not integrity-critical relationships.
+    gpu_instance_id: Mapped[Optional[uuid.UUID]] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)

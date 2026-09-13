@@ -3,12 +3,21 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from typing import Literal
 
 from app.auth.internal import RequestContext, require_context
+from app.auth.maintenance import block_if_maintenance_unless_admin
 from app.database import get_db
 from app.models.usage import UsageEvent, UsageEventStatus
+from app.services import usage_analytics
 
 router = APIRouter(prefix="/usage", tags=["usage"])
+
+# Separate router/prefix in this same file per the existing app/api/internal.py
+# pattern (router + gpu_sweep_router) — this endpoint lives at /compute/usage-summary,
+# not /usage/usage-summary, and needs the same maintenance-mode gating as the
+# rest of /compute/* (see app/auth/maintenance.py).
+compute_router = APIRouter(prefix="/compute", tags=["compute"], dependencies=[Depends(block_if_maintenance_unless_admin)])
 
 
 @router.get("/events")
@@ -57,3 +66,18 @@ def usage_summary(ctx: RequestContext = Depends(require_context), db: Session = 
         "total_tokens": input_tokens + output_tokens,
         "total_charge_micros": total_charge_micros,
     }
+
+
+@compute_router.get("/usage-summary")
+def gpu_usage_summary(
+    period: Literal["day", "month", "year"] = Query(default="month"),
+    ctx: RequestContext = Depends(require_context),
+    db: Session = Depends(get_db),
+):
+    """
+    GPU-rental spend/usage analytics for the dashboard — read-only, never
+    mutates the ledger or triggers billing. This is entirely separate from
+    the AI-token usage endpoints above (which are paused); it reports only
+    on GPU_USAGE ledger entries and GpuInstance data.
+    """
+    return usage_analytics.get_usage_summary(db, ctx.organization_id, period)

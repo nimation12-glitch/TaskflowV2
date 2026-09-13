@@ -46,6 +46,7 @@ def record_transaction(
     stripe_payment_intent_id: str | None = None,
     stripe_checkout_session_id: str | None = None,
     usage_event_id: uuid.UUID | None = None,
+    gpu_instance_id: uuid.UUID | None = None,
 ) -> CreditTransaction:
     """
     amount_micros: positive to credit, negative to debit.
@@ -73,6 +74,7 @@ def record_transaction(
         stripe_payment_intent_id=stripe_payment_intent_id,
         stripe_checkout_session_id=stripe_checkout_session_id,
         usage_event_id=usage_event_id,
+        gpu_instance_id=gpu_instance_id,
     )
     db.add(txn)
     db.flush()

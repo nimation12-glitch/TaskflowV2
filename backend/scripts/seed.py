@@ -29,12 +29,7 @@ PLAN_DEFAULTS = [
         code=PlanCode.FREE,
         display_name="Free",
         monthly_price_micros=0,
-        monthly_credit_micros=0,  # was 2_000_000 (£2) — leftover from the old AI-credit
-        # design. Now that this ledger funds real AWS GPU spend, a free automatic grant
-        # with no payment method on file is a real, repeatable drain on non-renewable
-        # funding (multiple free signups = free AWS money). Free plan's benefit is
-        # access to rent (1 concurrent, 50GB, standard rates) — not free wallet balance.
-        # Wallet must be funded via a real Stripe top-up before any rental, all plans.
+        monthly_credit_micros=2_000_000,
         rate_limit_rpm=20,
         compute_priority=0,
         max_members=3,
@@ -50,9 +45,7 @@ PLAN_DEFAULTS = [
         code=PlanCode.PRO,
         display_name="Pro",
         monthly_price_micros=30_000_000,
-        monthly_credit_micros=0,  # was 15_000_000 (£15) — same leftover-credit issue as
-        # Free. Pro's value is the 10% rate discount + higher limits/priority, not a
-        # monthly wallet stipend that could exceed the £30 subscription fee in AWS cost.
+        monthly_credit_micros=15_000_000,
         rate_limit_rpm=100,
         compute_priority=1,
         max_members=10,
@@ -68,7 +61,7 @@ PLAN_DEFAULTS = [
         code=PlanCode.MAX,
         display_name="Max",
         monthly_price_micros=90_000_000,
-        monthly_credit_micros=0,  # was 50_000_000 (£50) — same fix, see Pro's comment above.
+        monthly_credit_micros=50_000_000,
         rate_limit_rpm=300,
         compute_priority=2,
         max_members=25,

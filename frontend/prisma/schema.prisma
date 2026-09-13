@@ -37,6 +37,12 @@ model User {
   // exposed to or trusted from the client.
   isPlatformAdmin Boolean @default(false)
 
+  // "light" | "dark" | "system". Deliberately stored here rather than in
+  // localStorage/a cookie — the app has a hard no-browser-storage-for-
+  // preferences constraint, and this doubles as a real account setting that
+  // follows the user across devices.
+  themePreference String @default("system")
+
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from typing import Literal, Optional
 
 from app.auth.internal import RequestContext, require_context
+from app.auth.maintenance import block_if_maintenance_unless_admin
 from app.database import get_db
 from app.models.compute import BookingDuration, GpuInstance, PaymentMode
 from app.models.org import Organization
@@ -15,7 +16,7 @@ from app.services import gpu_billing
 from app.services import gpu_rentals as gpu_rental_service
 from app.services import ssh_keys as ssh_key_service
 
-router = APIRouter(prefix="/compute/rentals", tags=["compute"])
+router = APIRouter(prefix="/compute/rentals", tags=["compute"], dependencies=[Depends(block_if_maintenance_unless_admin)])
 
 _PAYMENT_MODE_TO_API = {PaymentMode.PAY_AS_YOU_GO: "pay_as_you_go", PaymentMode.BOOKING: "booking"}
 _PAYMENT_MODE_FROM_API = {v: k for k, v in _PAYMENT_MODE_TO_API.items()}

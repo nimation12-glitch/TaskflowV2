@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.auth.internal import RequestContext, require_context
+from app.auth.maintenance import block_if_maintenance_unless_admin
 from app.database import get_db
 from app.services import gpu_rentals as gpu_rental_service
 
-router = APIRouter(prefix="/compute", tags=["compute"])
+router = APIRouter(prefix="/compute", tags=["compute"], dependencies=[Depends(block_if_maintenance_unless_admin)])
 
 
 @router.get("/gpu-types")

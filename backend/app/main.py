@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    admin,
     api_keys,
     billing,
     gateway,
@@ -15,6 +16,7 @@ from app.api import (
     organizations,
     rentals,
     ssh_keys,
+    system,
     team,
     usage,
     wallet,
@@ -44,11 +46,14 @@ app.add_middleware(
 
 app.include_router(internal.router)
 app.include_router(internal.gpu_sweep_router)
+app.include_router(system.router)
+app.include_router(admin.router)
 app.include_router(organizations.router)
 app.include_router(api_keys.router)
 app.include_router(team.router)
 app.include_router(billing.router)
 app.include_router(usage.router)
+app.include_router(usage.compute_router)
 app.include_router(models_catalog.router)
 app.include_router(webhooks.router)
 app.include_router(gateway.router)

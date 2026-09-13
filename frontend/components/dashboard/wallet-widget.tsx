@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
 import { useAction } from "@/lib/hooks/use-action";
 import { formatGbp } from "@/lib/utils";
-import { topUpWalletAction } from "@/app/dashboard/compute/actions";
+import { topUpWalletAction } from "@/app/(app)/compute/actions";
 
 const PACKAGES = [
   { label: "£10", amountMicros: 10_000_000 },

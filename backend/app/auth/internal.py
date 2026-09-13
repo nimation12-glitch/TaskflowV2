@@ -32,6 +32,10 @@ class RequestContext:
     user_id: uuid.UUID
     organization_id: uuid.UUID
     role: Role
+    # Defaults to False so tokens issued before this claim existed still
+    # decode correctly — never trust its absence as "not an admin was denied",
+    # it's just an older token predating the claim.
+    is_platform_admin: bool = False
 
 
 def _decode(token: str) -> dict:
@@ -56,6 +60,7 @@ def require_context(authorization: str | None = Header(default=None)) -> Request
             user_id=uuid.UUID(claims["sub"]),
             organization_id=uuid.UUID(claims["org_id"]),
             role=Role(claims["role"]),
+            is_platform_admin=bool(claims.get("is_platform_admin", False)),
         )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Malformed token claims") from exc
@@ -68,3 +73,15 @@ def require_role(*allowed: Role):
         return ctx
 
     return _check
+
+
+def require_platform_admin(ctx: RequestContext = Depends(require_context)) -> RequestContext:
+    """
+    is_platform_admin is claim-only — it arrives on an already-verified JWT
+    from the Next.js/Prisma identity database and can never be set through
+    any endpoint this backend exposes. There is deliberately no write path
+    for this flag here.
+    """
+    if not ctx.is_platform_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Platform admin access required")
+    return ctx

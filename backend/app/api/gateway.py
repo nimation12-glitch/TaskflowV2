@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.auth.maintenance import block_if_maintenance_unconditional
 from app.models.api_key import ApiKey
 from app.models.billing import CreditTransactionType, Plan, Subscription, SubscriptionStatus
 from app.models.catalog import AiModel, ModelEntitlement, ModelStatus, Provider
@@ -20,7 +21,7 @@ from app.services import api_keys as api_key_service
 from app.services import credits as credits_service
 from app.services import pricing as pricing_service
 
-router = APIRouter(prefix="/v1", tags=["gateway"])
+router = APIRouter(prefix="/v1", tags=["gateway"], dependencies=[Depends(block_if_maintenance_unconditional)])
 
 
 async def authenticate(authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> ApiKey:

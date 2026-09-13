@@ -26,6 +26,38 @@
   --danger-foreground: 210 20% 96%;
 }
 
+/*
+ * Light theme. Semantic colors (accent/success/warning/danger) are
+ * deliberately darker/more saturated here than in :root — components like
+ * Badge use the raw token as a TEXT color (e.g. text-success on a light
+ * wash), so the same bright dark-mode values would be illegible on a white
+ * background. Applied via a class on <html> (see app/layout.tsx), driven by
+ * a Prisma-backed preference rather than localStorage.
+ */
+.light {
+  --background: 210 25% 98%;
+  --foreground: 222 45% 9%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 45% 9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 45% 9%;
+  --muted: 210 25% 94%;
+  --muted-foreground: 215 15% 40%;
+  --border: 214 20% 88%;
+  --primary: 217 91% 55%;
+  --primary-foreground: 210 40% 99%;
+  --secondary: 220 65% 22%;
+  --secondary-foreground: 210 30% 95%;
+  --accent: 82 70% 32%;
+  --accent-foreground: 84 60% 96%;
+  --success: 152 60% 30%;
+  --success-foreground: 150 45% 97%;
+  --warning: 32 85% 38%;
+  --warning-foreground: 40 90% 97%;
+  --danger: 356 70% 45%;
+  --danger-foreground: 210 20% 98%;
+}
+
 * {
   border-color: hsl(var(--border));
 }
@@ -33,6 +65,10 @@
 html {
   scroll-behavior: smooth;
   color-scheme: dark;
+}
+
+html.light {
+  color-scheme: light;
 }
 
 body {
@@ -69,11 +105,21 @@ body {
 }
 
 .grid-fade {
+  position: relative;
+  isolation: isolate;
+}
+.grid-fade::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   background-image:
     linear-gradient(hsl(var(--border) / 0.5) 1px, transparent 1px),
     linear-gradient(90deg, hsl(var(--border) / 0.5) 1px, transparent 1px);
   background-size: 44px 44px;
   mask-image: radial-gradient(ellipse 70% 55% at 50% 0%, black 45%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 0%, black 45%, transparent 100%);
+  pointer-events: none;
 }
 
 .skeleton {

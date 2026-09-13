@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { LogoWordmark } from "@/components/logo-mark";
+import { Reveal } from "@/components/reveal";
 import { PLAN_LIMITS, type PlanCode } from "@/lib/compute-types";
 import { GPU_CATALOG_REFERENCE } from "@/lib/gpu-catalog-reference";
 
@@ -72,7 +74,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
-        <span className="text-lg font-semibold tracking-tight">TaskFlow</span>
+        <LogoWordmark size={26} />
         <nav className="flex items-center gap-3">
           <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground">
             Sign in
@@ -87,7 +89,11 @@ export default function LandingPage() {
         <div className="mx-auto max-w-4xl px-6 pt-16 pb-24 text-center">
           <Badge variant="accent" className="mx-auto">GPU rental, live today</Badge>
           <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
-            Dedicated GPUs, rented by the hour or booked upfront.
+            Dedicated GPUs,{" "}
+            <span className="bg-gradient-to-r from-primary via-primary to-accent bg-clip-text text-transparent">
+              rented by the hour
+            </span>{" "}
+            or booked upfront.
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-lg text-muted-foreground">
             TaskFlow gives you a real GPU instance in minutes — pay-as-you-go from a reloadable wallet, or lock in a
@@ -108,11 +114,13 @@ export default function LandingPage() {
 
       <section className="mx-auto max-w-6xl px-6 pb-24">
         <div className="grid gap-6 sm:grid-cols-3">
-          {CAPABILITIES.map((c) => (
-            <div key={c.title} className="panel-edge rounded-lg border border-border p-6">
-              <h3 className="font-medium">{c.title}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{c.body}</p>
-            </div>
+          {CAPABILITIES.map((c, i) => (
+            <Reveal key={c.title} delayMs={i * 100}>
+              <div className="panel-edge rounded-lg border border-border p-6 transition-transform duration-300 hover:-translate-y-1 hover:border-primary/30">
+                <h3 className="font-medium">{c.title}</h3>
+                <p className="mt-2 text-sm text-muted-foreground">{c.body}</p>
+              </div>
+            </Reveal>
           ))}
         </div>
       </section>
@@ -120,14 +128,16 @@ export default function LandingPage() {
       <section className="mx-auto max-w-5xl px-6 pb-24">
         <h2 className="text-center text-2xl font-semibold">How it works</h2>
         <div className="mt-10 grid gap-10 sm:grid-cols-3">
-          {HOW_IT_WORKS.map((s) => (
-            <div key={s.step}>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 font-mono-data text-sm font-semibold text-primary">
-                {s.step}
+          {HOW_IT_WORKS.map((s, i) => (
+            <Reveal key={s.step} delayMs={i * 120}>
+              <div>
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary/20 to-accent/10 font-mono-data text-sm font-semibold text-primary">
+                  {s.step}
+                </div>
+                <h3 className="mt-4 font-medium">{s.title}</h3>
+                <p className="mt-1.5 text-sm text-muted-foreground">{s.body}</p>
               </div>
-              <h3 className="mt-4 font-medium">{s.title}</h3>
-              <p className="mt-1.5 text-sm text-muted-foreground">{s.body}</p>
-            </div>
+            </Reveal>
           ))}
         </div>
       </section>
@@ -138,20 +148,22 @@ export default function LandingPage() {
           Base rates shown at Free-plan pricing. Pro and Max get 10% and 20% off every tier.
         </p>
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {GPU_CATALOG_REFERENCE.map((t) => (
-            <div key={t.slug} className="panel-edge rounded-lg border border-border p-4">
-              <p className="text-sm font-medium">{t.display_name}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t.gpu} · {t.vram_gb}GB VRAM
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {t.vcpu} vCPU · {t.ram_gb}GB RAM
-              </p>
-              <p className="mt-3 font-mono-data text-lg font-semibold">
-                £{t.base_price_gbp_per_hour.toFixed(2)}
-                <span className="text-xs font-normal text-muted-foreground">/hr</span>
-              </p>
-            </div>
+          {GPU_CATALOG_REFERENCE.map((t, i) => (
+            <Reveal key={t.slug} delayMs={i * 80}>
+              <div className="panel-edge rounded-lg border border-border p-4 transition-transform duration-300 hover:-translate-y-1 hover:border-primary/30">
+                <p className="text-sm font-medium">{t.display_name}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t.gpu} · {t.vram_gb}GB VRAM
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t.vcpu} vCPU · {t.ram_gb}GB RAM
+                </p>
+                <p className="mt-3 font-mono-data text-lg font-semibold">
+                  £{t.base_price_gbp_per_hour.toFixed(2)}
+                  <span className="text-xs font-normal text-muted-foreground">/hr</span>
+                </p>
+              </div>
+            </Reveal>
           ))}
         </div>
       </section>
@@ -163,32 +175,39 @@ export default function LandingPage() {
           lower rates.
         </p>
         <div className="mt-10 grid gap-6 sm:grid-cols-3">
-          {PLANS.map((plan) => (
-            <Card key={plan.code} className={plan.highlighted ? "border-primary/50 ring-1 ring-primary/20" : ""}>
-              <CardHeader>
-                <CardTitle className="text-foreground">{plan.name}</CardTitle>
-                <div className="mt-2 flex items-baseline gap-1">
-                  <span className="text-3xl font-semibold">{plan.price}</span>
-                  <span className="text-sm text-muted-foreground">/month</span>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">{plan.tagline}</p>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2 text-sm">
-                  {planFeatures(plan.code).map((f) => (
-                    <li key={f} className="flex items-start gap-2 text-muted-foreground">
-                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                <Link href="/signup" className="mt-6 block">
-                  <Button variant={plan.highlighted ? "primary" : "secondary"} className="w-full">
-                    Choose {plan.name}
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
+          {PLANS.map((plan, i) => (
+            <Reveal key={plan.code} delayMs={i * 100}>
+              <Card
+                className={
+                  (plan.highlighted ? "border-primary/50 ring-1 ring-primary/20 " : "") +
+                  "transition-transform duration-300 hover:-translate-y-1"
+                }
+              >
+                <CardHeader>
+                  <CardTitle className="text-foreground">{plan.name}</CardTitle>
+                  <div className="mt-2 flex items-baseline gap-1">
+                    <span className="text-3xl font-semibold">{plan.price}</span>
+                    <span className="text-sm text-muted-foreground">/month</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{plan.tagline}</p>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2 text-sm">
+                    {planFeatures(plan.code).map((f) => (
+                      <li key={f} className="flex items-start gap-2 text-muted-foreground">
+                        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <Link href="/signup" className="mt-6 block">
+                    <Button variant={plan.highlighted ? "primary" : "secondary"} className="w-full">
+                      Choose {plan.name}
+                    </Button>
+                  </Link>
+                </CardContent>
+              </Card>
+            </Reveal>
           ))}
         </div>
       </section>
@@ -219,7 +238,18 @@ export default function LandingPage() {
       </section>
 
       <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground">
-        TaskFlow · dedicated GPU infrastructure, without the babysitting.
+        <p>TaskFlow · dedicated GPU infrastructure, without the babysitting.</p>
+        <div className="mt-3 flex justify-center gap-4 text-xs">
+          <Link href="/terms" className="hover:text-foreground">
+            Terms of Service
+          </Link>
+          <Link href="/privacy" className="hover:text-foreground">
+            Privacy Policy
+          </Link>
+          <Link href="/docs" className="hover:text-foreground">
+            Docs
+          </Link>
+        </div>
       </footer>
     </div>
   );

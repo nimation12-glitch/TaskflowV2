@@ -76,6 +76,7 @@ def bill_running_rental(db: Session, instance: GpuInstance) -> None:
             amount_micros=-amount_micros,
             description=f"GPU usage — {tier_label} ({elapsed_seconds:.0f}s)",
             allow_overdraft=False,
+            gpu_instance_id=instance.id,
         )
         instance.total_charged_micros += amount_micros
 
