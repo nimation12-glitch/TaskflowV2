@@ -16,6 +16,16 @@ import { prisma } from "@/lib/prisma";
  */
 export const isPlatformAdmin = cache(async (userId: string | undefined | null): Promise<boolean> => {
   if (!userId) return false;
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { isPlatformAdmin: true } });
-  return user?.isPlatformAdmin ?? false;
+  try {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { isPlatformAdmin: true } });
+    return user?.isPlatformAdmin ?? false;
+  } catch (err) {
+    // Fail CLOSED, not open. This is called from the root layout (above
+    // every error boundary — see app/global-error.tsx) to decide
+    // maintenance-mode bypass and admin UI access. A DB hiccup or pending
+    // migration must never accidentally grant admin — default to false and
+    // treat the caller as an ordinary, non-admin user.
+    console.error("[taskflow] isPlatformAdmin lookup failed — defaulting to false:", err);
+    return false;
+  }
 });
