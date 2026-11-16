@@ -53,7 +53,7 @@ PLAN_DEFAULTS = [
         gpu_booking_allowed=False,
         gpu_max_booking_days=0,
         gpu_rate_bps=10_000,  # no plan discounts: prices are fixed (spec §11)
-        included_workspaces=2,
+        included_workspaces=1,  # spec §6/§7: 1 x 50GB workspace, hard slot limit
         workspace_storage_gb=50,
         gpu_max_tier=GpuTier.STARTER,
     ),
