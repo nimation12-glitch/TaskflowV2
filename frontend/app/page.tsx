@@ -10,20 +10,20 @@ import { PLAN_LIMITS, type PlanCode } from "@/lib/compute-types";
 import { GPU_CATALOG_REFERENCE } from "@/lib/gpu-catalog-reference";
 
 const PLANS: { code: PlanCode; name: string; price: string; tagline: string; highlighted?: boolean }[] = [
-  { code: "FREE", name: "Free", price: "£0", tagline: "Try it out." },
-  { code: "PRO", name: "Pro", price: "£30", tagline: "For regular projects.", highlighted: true },
-  { code: "MAX", name: "Max", price: "£90", tagline: "For heavy workloads." },
+  { code: "FREE", name: "Free", price: "£0", tagline: "Starter GPUs, pay as you go." },
+  { code: "PRO", name: "Pro", price: "£35", tagline: "Standard GPUs for regular projects.", highlighted: true },
+  { code: "ULTRA", name: "Ultra", price: "£65", tagline: "Pro-tier GPUs and more workspaces." },
+  { code: "MAX", name: "Max", price: "£100", tagline: "Everything, including Ultra-tier GPUs." },
 ];
 
 function planFeatures(code: PlanCode): string[] {
   const l = PLAN_LIMITS[code];
-  const rateNote = l.ratesMultiplier < 1 ? `${Math.round((1 - l.ratesMultiplier) * 100)}% off all GPU rates` : "Standard GPU rates";
   const bookingNote = l.bookingAllowed ? "Pay-as-you-go or upfront day/week booking" : "Pay-as-you-go only";
   return [
     `${l.concurrentRentals} concurrent rental${l.concurrentRentals > 1 ? "s" : ""}`,
-    `${l.maxStorageGb}GB storage max`,
+    `${l.maxStorageGb >= 1024 ? "1TB" : `${l.maxStorageGb}GB`} storage max`,
     code === "FREE" ? "4-hour max session length" : `${l.maxBookingDays}-day max rental length`,
-    rateNote,
+    "All GPU time billed from your wallet — no included compute credits",
     bookingNote,
     `${l.queuePriority} queue priority`,
   ];

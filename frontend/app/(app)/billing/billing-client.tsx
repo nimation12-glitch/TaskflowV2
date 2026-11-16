@@ -11,20 +11,20 @@ import { PLAN_LIMITS, type PlanCode } from "@/lib/compute-types";
 import { checkoutSubscriptionAction, openBillingPortalAction } from "./actions";
 
 const TIERS: { code: PlanCode; name: string; price: string; tagline: string; accent?: "primary" | "accent" }[] = [
-  { code: "FREE", name: "Free", price: "£0/mo", tagline: "Try it out." },
-  { code: "PRO", name: "Pro", price: "£30/mo", tagline: "For regular projects.", accent: "primary" },
-  { code: "MAX", name: "Max", price: "£90/mo", tagline: "For heavy workloads.", accent: "accent" },
+  { code: "FREE", name: "Free", price: "£0/mo", tagline: "Starter GPUs, pay as you go." },
+  { code: "PRO", name: "Pro", price: "£35/mo", tagline: "Standard GPUs for regular projects.", accent: "primary" },
+  { code: "ULTRA", name: "Ultra", price: "£65/mo", tagline: "Pro-tier GPUs and more workspaces." },
+  { code: "MAX", name: "Max", price: "£100/mo", tagline: "Everything, including Ultra-tier GPUs.", accent: "accent" },
 ];
 
 function tierFeatures(code: PlanCode): string[] {
   const l = PLAN_LIMITS[code];
-  const rateNote = l.ratesMultiplier < 1 ? `${Math.round((1 - l.ratesMultiplier) * 100)}% off all GPU rates` : "Standard GPU rates";
   const bookingNote = l.bookingAllowed ? "Pay-as-you-go or upfront day/week booking" : "Pay-as-you-go only";
   return [
     `${l.concurrentRentals} concurrent rental${l.concurrentRentals > 1 ? "s" : ""}`,
-    `${l.maxStorageGb}GB storage max`,
+    `${l.maxStorageGb >= 1024 ? "1TB" : `${l.maxStorageGb}GB`} storage max`,
     code === "FREE" ? "4-hour maximum session length" : `${l.maxBookingDays}-day maximum rental length`,
-    rateNote,
+    "All GPU time billed from your wallet — no included compute credits",
     bookingNote,
     `${l.queuePriority} queue priority`,
   ];
@@ -32,11 +32,11 @@ function tierFeatures(code: PlanCode): string[] {
 
 export function PlanTiers({ currentPlan }: { currentPlan: PlanCode }) {
   const { pending, run } = useAction();
-  const order: PlanCode[] = ["FREE", "PRO", "MAX"];
+  const order: PlanCode[] = ["FREE", "PRO", "ULTRA", "MAX"];
   const currentIndex = order.indexOf(currentPlan);
 
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {TIERS.map((tier, i) => {
         const isCurrent = tier.code === currentPlan;
         const isUpgrade = i > currentIndex;
@@ -101,14 +101,14 @@ export function PlanTiers({ currentPlan }: { currentPlan: PlanCode }) {
                         You'll be redirected to secure Stripe checkout to confirm the change. Your plan updates as
                         soon as payment completes
                         {isUpgrade
-                          ? `, including your new GPU rate discount and higher concurrent-rental limit immediately.`
+                          ? `, including your higher concurrent-rental limit immediately. GPU time is billed from your wallet either way.`
                           : " — any rentals above the new concurrent limit will need to be stopped."}
                       </>
                     }
                     confirmLabel="Continue to checkout"
                     pending={pending}
                     onConfirm={() =>
-                      run(() => checkoutSubscriptionAction(tier.code as "PRO" | "MAX"), { error: "Couldn't start checkout" })
+                      run(() => checkoutSubscriptionAction(tier.code as "PRO" | "ULTRA" | "MAX"), { error: "Couldn't start checkout" })
                     }
                   />
                 )}

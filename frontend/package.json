@@ -52,5 +52,12 @@
     "eslint": "8.57.0",
     "eslint-config-next": "14.2.15",
     "tsx": "4.19.1"
+  },
+  "allowScripts": {
+    "@prisma/client@5.20.0": true,
+    "@prisma/engines@5.20.0": true,
+    "esbuild@0.23.1": true,
+    "prisma@5.20.0": true,
+    "unrs-resolver@1.12.2": true
   }
 }

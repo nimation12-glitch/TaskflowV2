@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.base import TimestampMixin, UUIDPKMixin
+from app.models.compute import GpuTier
 
 MICROS_PER_GBP = 1_000_000  # money is stored as integer micro-GBP everywhere. Never floats.
 
@@ -18,6 +19,7 @@ MICROS_PER_GBP = 1_000_000  # money is stored as integer micro-GBP everywhere. N
 class PlanCode(str, enum.Enum):
     FREE = "FREE"
     PRO = "PRO"
+    ULTRA = "ULTRA"
     MAX = "MAX"
 
 
@@ -25,6 +27,10 @@ class Plan(UUIDPKMixin, TimestampMixin, Base):
     """
     Plan configuration is database-backed and editable without redeploying —
     numbers below are just the seeded defaults (see scripts/seed.py).
+
+    Per the product spec (AWS_GPU_Cloud_Catalogue_Final §2): a subscription
+    buys ACCESS and workspace allowances, never compute. monthly_credit_micros
+    is therefore 0 on every plan — GPU time is always wallet-metered.
     """
 
     __tablename__ = "plans"
@@ -32,11 +38,24 @@ class Plan(UUIDPKMixin, TimestampMixin, Base):
     code: Mapped[PlanCode] = mapped_column(Enum(PlanCode), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     monthly_price_micros: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Kept for schema compatibility but always 0 under the wallet-metered
+    # model — see the class docstring. Never grant credits from a plan.
     monthly_credit_micros: Mapped[int] = mapped_column(BigInteger, nullable=False)
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, nullable=False)
     compute_priority: Mapped[int] = mapped_column(Integer, nullable=False)  # higher = more priority
     max_members: Mapped[int] = mapped_column(Integer, nullable=False)
     allows_gpu_rental: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # --- Workspace entitlements (spec §6) — provisioned on demand, counted
+    # against hard account-level slot limits ---
+    included_workspaces: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    workspace_storage_gb: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
+
+    # Highest GPU tier this plan can launch (tiers are strictly cumulative:
+    # Starter ⊂ Standard ⊂ Pro ⊂ Ultra). See GpuTier in app/models/compute.py.
+    gpu_max_tier: Mapped[GpuTier] = mapped_column(
+        Enum(GpuTier, name="gputier"), default=GpuTier.STARTER, nullable=False
+    )
     stripe_price_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
     # --- GPU rental limits (see app/services/gpu_rentals.py — always enforced
@@ -163,3 +182,31 @@ class CreditTransaction(UUIDPKMixin, Base):
     # high-volume ledger and both fields are optional traceability links,
     # not integrity-critical relationships.
     gpu_instance_id: Mapped[Optional[uuid.UUID]] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
+
+
+class AccountStatement(UUIDPKMixin, Base):
+    """
+    Append-only, immutable JSON snapshot of an organization's billing state.
+
+    Each generation inserts a NEW row. Rows are never updated or deleted by
+    any code path — there is deliberately no update endpoint and no delete
+    endpoint. `content_sha256` is a SHA-256 of the canonical JSON encoding
+    of `content`; the read path re-verifies it (see app/services/statement.py)
+    so a tampered row fails integrity instead of silently showing altered
+    numbers. Payment documents referenced inside the statement (Stripe
+    hosted invoice/receipt URLs) are authoritative Stripe links stored on
+    the Invoice rows and mirrored into the snapshot.
+    """
+
+    __tablename__ = "account_statements"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    format_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    content: Mapped[dict] = mapped_column(JSON, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Who triggered this snapshot (from the verified JWT). NULL only for
+    # system-generated snapshots.
+    generated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(PGUUID(as_uuid=True), nullable=True)

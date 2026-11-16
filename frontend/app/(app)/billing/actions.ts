@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { backendJson } from "@/lib/backend-client";
 
-export async function checkoutSubscriptionAction(plan: "PRO" | "MAX") {
+export async function checkoutSubscriptionAction(plan: "PRO" | "ULTRA" | "MAX") {
   const session = await auth();
   if (!session?.user?.email) throw new Error("Not signed in");
   const { checkout_url } = await backendJson<{ checkout_url: string }>("/billing/checkout/subscription", {

@@ -1,7 +1,7 @@
 import "server-only";
 import { backendJson } from "@/lib/backend-client";
 
-export type PlanCode = "FREE" | "PRO" | "MAX";
+export type PlanCode = "FREE" | "PRO" | "ULTRA" | "MAX";
 
 export type AdminOrgSummary = {
   id: string;

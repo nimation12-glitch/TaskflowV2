@@ -51,6 +51,14 @@ CREDIT_PACKAGE_PRICE_IDS = {
     100_000_000: "stripe_price_credit_100",
 }
 
+# Settings attribute holding the recurring Stripe Price id for each paid plan
+# (spec §2: Free £0 / Pro £35 / Ultra £65 / Max £100).
+SUBSCRIPTION_PRICE_ATTRS = {
+    PlanCode.PRO: "stripe_price_pro",
+    PlanCode.ULTRA: "stripe_price_ultra",
+    PlanCode.MAX: "stripe_price_max",
+}
+
 
 def get_or_create_stripe_customer(db: Session, org: Organization, email: str) -> str:
     client = _client()
@@ -74,9 +82,10 @@ def get_or_create_stripe_customer(db: Session, org: Organization, email: str) ->
 def create_subscription_checkout_session(
     db: Session, org: Organization, email: str, plan_code: PlanCode
 ) -> str:
-    """Returns a Stripe Checkout URL for a Pro/Max subscription."""
+    """Returns a Stripe Checkout URL for a Pro/Ultra/Max subscription."""
     client = _client()
-    price_id = settings.stripe_price_pro if plan_code == PlanCode.PRO else settings.stripe_price_max
+    attr = SUBSCRIPTION_PRICE_ATTRS.get(plan_code)
+    price_id = getattr(settings, attr) if attr else ""
     if not price_id:
         raise BillingNotConfiguredError(f"No Stripe price configured for plan {plan_code}")
 
@@ -425,10 +434,16 @@ def handle_subscription_deleted(db: Session, event: dict) -> None:
 
 def handle_invoice_paid(db: Session, event: dict) -> None:
     """
-    This is the ONLY place monthly subscription credits are granted. Guarded by
-    last_credit_grant_period_start so a webhook retry (same or replayed event)
-    can never double-grant — combined with the StripeEvent idempotency table,
-    this is defense in depth.
+    Subscriptions buy ACCESS, not compute (product spec §3): no wallet credits
+    are granted here — GPU time is always wallet-metered from top-ups. This
+    handler records the payment document (an Invoice row carrying Stripe's
+    hosted receipt link, which the account statement mirrors) and marks the
+    subscription ACTIVE.
+
+    Dedupe: the StripeEvent idempotency table stops the same webhook event
+    from being processed twice; the per-invoice existence check below adds a
+    second layer so a replayed or re-delivered invoice can never create a
+    duplicate payment record.
     """
     invoice = event["data"]["object"]
     stripe_sub_id = invoice.get("subscription")
@@ -441,37 +456,22 @@ def handle_invoice_paid(db: Session, event: dict) -> None:
     if row is None:
         return
 
-    period_start_ts = invoice.get("period_start") or (
-        invoice.get("lines", {}).get("data", [{}])[0].get("period", {}).get("start")
-    )
-    period_start = datetime.fromtimestamp(period_start_ts, tz=timezone.utc) if period_start_ts else None
-
-    if period_start and row.last_credit_grant_period_start == period_start:
-        return  # already granted for this billing period
-
-    plan = db.get(Plan, row.plan_id)
-    credits_service.record_transaction(
-        db,
-        organization_id=row.organization_id,
-        type=CreditTransactionType.MONTHLY_GRANT,
-        amount_micros=plan.monthly_credit_micros,
-        description=f"Monthly {plan.display_name} credit allowance",
-        stripe_event_id=event["id"],
-    )
     row.status = SubscriptionStatus.ACTIVE
-    if period_start:
-        row.last_credit_grant_period_start = period_start
 
-    db.add(
-        Invoice(
-            organization_id=row.organization_id,
-            stripe_invoice_id=invoice["id"],
-            amount_due_micros=int(invoice.get("amount_due", 0)) * 10_000,  # Stripe pence -> micro-GBP
-            amount_paid_micros=int(invoice.get("amount_paid", 0)) * 10_000,
-            status=invoice.get("status", "paid"),
-            hosted_invoice_url=invoice.get("hosted_invoice_url"),
+    existing_invoice = db.execute(
+        select(Invoice).where(Invoice.stripe_invoice_id == invoice["id"])
+    ).scalar_one_or_none()
+    if existing_invoice is None:
+        db.add(
+            Invoice(
+                organization_id=row.organization_id,
+                stripe_invoice_id=invoice["id"],
+                amount_due_micros=int(invoice.get("amount_due", 0)) * 10_000,  # Stripe pence -> micro-GBP
+                amount_paid_micros=int(invoice.get("amount_paid", 0)) * 10_000,
+                status=invoice.get("status", "paid"),
+                hosted_invoice_url=invoice.get("hosted_invoice_url"),
+            )
         )
-    )
     db.flush()
 
 

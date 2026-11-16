@@ -13,7 +13,11 @@ export function storageAddOnMicros(storageGb: number): number {
   return blocks * STORAGE_MICROS_PER_BLOCK;
 }
 
-/** Applies the plan discount to a tier's base rate. */
+/**
+ * Fixed GPU prices (spec §11): plans buy access, not rate discounts, so every
+ * plan's multiplier is 1. Kept as an explicit pass-through so the billing path
+ * stays honest and any future change is a deliberate one.
+ */
 export function planAdjustedRateMicros(baseMicros: number, plan: PlanCode): number {
   return Math.round(baseMicros * PLAN_LIMITS[plan].ratesMultiplier);
 }

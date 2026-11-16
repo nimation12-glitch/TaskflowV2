@@ -10,6 +10,7 @@ from app.models.billing import (  # noqa: F401
     CreditAccount,
     CreditTransaction,
     CreditTransactionType,
+    AccountStatement,
     MICROS_PER_GBP,
 )
 from app.models.api_key import ApiKey, ApiKeyStatus  # noqa: F401
@@ -25,6 +26,7 @@ from app.models.catalog import (  # noqa: F401
 from app.models.usage import UsageEvent, UsageEventStatus  # noqa: F401
 from app.models.compute import (  # noqa: F401
     GpuType,
+    GpuTier,
     GpuInstance,
     GpuInstanceStatus,
     PaymentMode,

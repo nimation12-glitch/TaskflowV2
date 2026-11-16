@@ -17,7 +17,7 @@ import type { AdminOrgDetail, PlanCode } from "@/lib/admin-client";
 import { adjustCreditsAction, changePlanAction } from "./actions";
 
 const ROLE_VARIANT: Record<string, "accent" | "default" | "outline"> = { OWNER: "accent", ADMIN: "default", MEMBER: "outline" };
-const PLANS: PlanCode[] = ["FREE", "PRO", "MAX"];
+const PLANS: PlanCode[] = ["FREE", "PRO", "ULTRA", "MAX"];
 
 function CreditsForm({ orgId, currentBalance }: { orgId: string; currentBalance: number }) {
   const [amount, setAmount] = useState("");

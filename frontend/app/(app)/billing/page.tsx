@@ -13,15 +13,24 @@ type OrgSummary = {
   subscription: { status: string | null; current_period_end: string | null; cancel_at_period_end: boolean } | null;
 };
 
+type StatementSummary = {
+  id: string;
+  format_version: number;
+  content_sha256: string;
+  generated_at: string;
+};
+
 export default async function BillingPage() {
-  const [orgResult, rentalsResult] = await Promise.all([
+  const [orgResult, rentalsResult, historyResult] = await Promise.all([
     safe(backendJson<OrgSummary>("/organizations/me"), { plan: null, subscription: null }),
     safe(getRentals(), []),
+    safe(backendJson<{ statements: StatementSummary[] }>("/billing/statement/history"), { statements: [] }),
   ]);
   const org = orgResult.data;
   const currentPlan = org.plan?.code ?? "FREE";
   const limits = PLAN_LIMITS[currentPlan];
   const concurrentUsed = rentalsResult.data.filter((r) => r.status === "PROVISIONING" || r.status === "RUNNING" || r.status === "STOPPED").length;
+  const statementHistory = historyResult.data.statements ?? [];
 
   return (
     <div className="max-w-3xl">
@@ -72,6 +81,58 @@ export default async function BillingPage() {
       <div className="mt-3">
         <PlanTiers currentPlan={currentPlan} />
       </div>
+
+      <h2 className="mt-10 text-sm font-medium text-muted-foreground">Account statement</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        A read-only JSON document covering your whole account: plan, credit
+        balance, every payment, and every GPU rental. It is generated from our
+        append-only ledger — stored copies cannot be edited or deleted, and
+        each one carries a SHA-256 hash so its integrity can be verified.
+      </p>
+      <Card className="mt-3">
+        <CardContent className="pt-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Download full account statement</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Each download stores a new immutable snapshot and returns it with its snapshot id and hash inside.
+              </p>
+            </div>
+            <a
+              href="/api/statement"
+              className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Download JSON
+            </a>
+          </div>
+
+          {statementHistory.length > 0 && (
+            <div className="mt-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Snapshot history
+              </p>
+              <div className="mt-2 divide-y rounded-md border">
+                {statementHistory.slice(0, 8).map((s) => (
+                  <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 font-mono-data text-xs text-muted-foreground">
+                    <span>{new Date(s.generated_at).toLocaleString("en-GB")}</span>
+                    <span title={s.content_sha256}>sha256 {s.content_sha256.slice(0, 12)}…</span>
+                  </div>
+                ))}
+              </div>
+              {statementHistory.length > 8 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  +{statementHistory.length - 8} earlier snapshot{statementHistory.length - 8 === 1 ? "" : "s"}
+                </p>
+              )}
+            </div>
+          )}
+          {!historyResult.ok && (
+            <p className="mt-4">
+              <UnavailableNotice label="Statement history" />
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <p className="mt-6 text-xs text-muted-foreground">
         Need to rent a GPU right now?{" "}

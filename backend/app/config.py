@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
     stripe_price_pro: str = ""
+    stripe_price_ultra: str = ""
     stripe_price_max: str = ""
     stripe_price_credit_10: str = ""
     stripe_price_credit_25: str = ""
@@ -133,6 +134,8 @@ def validate_production_config(settings: Settings) -> None:
         missing.append("STRIPE_WEBHOOK_SECRET")
     if not settings.stripe_price_pro:
         missing.append("STRIPE_PRICE_PRO")
+    if not settings.stripe_price_ultra:
+        missing.append("STRIPE_PRICE_ULTRA")
     if not settings.stripe_price_max:
         missing.append("STRIPE_PRICE_MAX")
 

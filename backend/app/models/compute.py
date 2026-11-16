@@ -13,9 +13,27 @@ from app.database import Base
 from app.models.base import TimestampMixin, UUIDPKMixin
 
 
+class GpuTier(str, enum.Enum):
+    """
+    Access/performance tiers per the product spec (§9, §33). A family may
+    appear in more than one tier's catalogue, but each SKU is assigned the
+    LOWEST tier that lists it, so plan gating is a simple rank comparison:
+    a plan can launch any SKU whose tier rank <= plan.gpu_max_tier rank.
+    """
+
+    STARTER = "STARTER"
+    STANDARD = "STANDARD"
+    PRO = "PRO"
+    ULTRA = "ULTRA"
+
+    @classmethod
+    def rank(cls, tier: "GpuTier") -> int:
+        return list(cls).index(tier)
+
+
 class GpuType(UUIDPKMixin, TimestampMixin, Base):
     """
-    The GPU rental catalog. Data-driven like Plan/ModelPricing — never
+    The GPU rental catalogue. Data-driven like Plan/ModelPricing — never
     hardcode tier specs/prices in route handlers. Seeded defaults live in
     scripts/seed.py and must stay in sync with frontend/lib/gpu-catalog-reference.ts
     (marketing copy) and frontend/lib/compute-types.ts (GpuTier["slug"] union).
@@ -27,6 +45,12 @@ class GpuType(UUIDPKMixin, TimestampMixin, Base):
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     gpu_label: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g. "NVIDIA A10G", for display only
 
+    # Access tier this SKU belongs to (lowest tier listing it — see GpuTier).
+    tier: Mapped[GpuTier] = mapped_column(Enum(GpuTier, name="gputier"), default=GpuTier.STARTER, nullable=False)
+    # Number of physical GPUs in this configuration (multi-GPU SKUs are one
+    # rental, never independent per-GPU rentals — spec §10.5).
+    gpu_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
     aws_instance_type: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g. "g5.xlarge"
     aws_region: Mapped[str] = mapped_column(String(30), nullable=False)
     ami_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # must be filled in before enabling
@@ -37,6 +61,13 @@ class GpuType(UUIDPKMixin, TimestampMixin, Base):
 
     price_micros_per_hour: Mapped[int] = mapped_column(BigInteger, nullable=False)  # base rate, pre-plan-discount
     aws_cost_micros_per_hour: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)  # internal margin tracking only, never exposed
+    # Internal safe-cost ceiling (spec §11/§19): the scheduler must refuse to
+    # provision when projected infrastructure cost exceeds this — never rent
+    # at a loss just to keep an availability label.
+    safe_infrastructure_cost_micros: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+
+    # Customer-facing minimum rental before launch (spec §20). 1 hour at launch.
+    minimum_rental_hours: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Per-tier override of GPU_MAX_RUNTIME_HOURS_DEFAULT. NULL = use the default.
     max_runtime_hours: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

@@ -15,6 +15,7 @@ type SortKey = "name" | "plan_code" | "wallet_balance_micros" | "member_count" |
 const PLAN_BADGE_VARIANT: Record<PlanCode, "default" | "success" | "accent"> = {
   FREE: "default",
   PRO: "success",
+  ULTRA: "success",
   MAX: "accent",
 };
 

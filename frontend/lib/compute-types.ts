@@ -1,4 +1,4 @@
-export type PlanCode = "FREE" | "PRO" | "MAX";
+export type PlanCode = "FREE" | "PRO" | "ULTRA" | "MAX";
 
 export type GpuTier = {
   slug: "starter" | "standard" | "performance" | "max";
@@ -45,9 +45,12 @@ export const STORAGE_OPTIONS = [
   { gb: 50, minPlan: "FREE" as PlanCode },
   { gb: 100, minPlan: "FREE" as PlanCode },
   { gb: 250, minPlan: "PRO" as PlanCode },
-  { gb: 500, minPlan: "MAX" as PlanCode },
+  { gb: 500, minPlan: "ULTRA" as PlanCode },
 ];
 
+// Spec (§2/§11): prices are fixed — plans buy access, never rate discounts,
+// so ratesMultiplier is 1 on every plan. Kept as an explicit field so the
+// display path stays honest and any future change is a deliberate one.
 export const PLAN_LIMITS: Record<
   PlanCode,
   {
@@ -61,6 +64,7 @@ export const PLAN_LIMITS: Record<
   }
 > = {
   FREE: { concurrentRentals: 1, maxStorageGb: 50, maxSessionHours: 4, bookingAllowed: false, maxBookingDays: 0, ratesMultiplier: 1, queuePriority: "Lowest" },
-  PRO: { concurrentRentals: 3, maxStorageGb: 250, maxSessionHours: 24 * 7, bookingAllowed: true, maxBookingDays: 7, ratesMultiplier: 0.9, queuePriority: "Normal" },
-  MAX: { concurrentRentals: 10, maxStorageGb: 500, maxSessionHours: 24 * 14, bookingAllowed: true, maxBookingDays: 14, ratesMultiplier: 0.8, queuePriority: "Highest" },
+  PRO: { concurrentRentals: 3, maxStorageGb: 250, maxSessionHours: 24 * 7, bookingAllowed: true, maxBookingDays: 7, ratesMultiplier: 1, queuePriority: "Normal" },
+  ULTRA: { concurrentRentals: 6, maxStorageGb: 500, maxSessionHours: 24 * 14, bookingAllowed: true, maxBookingDays: 14, ratesMultiplier: 1, queuePriority: "Highest" },
+  MAX: { concurrentRentals: 10, maxStorageGb: 1024, maxSessionHours: 24 * 14, bookingAllowed: true, maxBookingDays: 14, ratesMultiplier: 1, queuePriority: "Highest" },
 };

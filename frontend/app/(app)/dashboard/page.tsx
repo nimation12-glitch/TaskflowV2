@@ -21,6 +21,7 @@ type OrgSummary = {
 const PLAN_BADGE_VARIANT: Record<PlanCode, "default" | "accent" | "success"> = {
   FREE: "default",
   PRO: "success",
+  ULTRA: "success",
   MAX: "accent",
 };
 

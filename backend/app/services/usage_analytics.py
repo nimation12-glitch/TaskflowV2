@@ -84,6 +84,13 @@ def get_usage_summary(db: Session, organization_id: uuid.UUID, period: Period, n
     # generate_series and LEFT JOIN the aggregated ledger onto it, so every
     # bucket in the window is present even with zero spend — the frontend
     # needs a continuous series, not one it has to fill gaps in itself.
+    #
+    # date_trunc truncates in the SESSION's TimeZone. The buckets are
+    # UTC-aligned instants, so truncation is anchored to UTC explicitly
+    # (timestamptz -> UTC wall time -> truncate -> back to timestamptz).
+    # Without this, a server/session timezone with a whole-hour offset
+    # (e.g. Europe/London) produces bucket starts at local midnight that
+    # never join against the UTC buckets and every total silently reads £0.
     bucket_rows = db.execute(
         text(
             f"""
@@ -95,13 +102,13 @@ def get_usage_summary(db: Session, organization_id: uuid.UUID, period: Period, n
                 ) AS bucket_start
             ),
             agg AS (
-                SELECT date_trunc(:unit, created_at) AS bucket_start,
+                SELECT date_trunc(:unit, created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS bucket_start,
                        SUM(-amount_micros) AS spend_micros
                 FROM credit_transactions
                 WHERE organization_id = :org_id
                   AND type = 'GPU_USAGE'
                   AND created_at >= :start ::timestamptz
-                GROUP BY date_trunc(:unit, created_at)
+                GROUP BY date_trunc(:unit, created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
             )
             SELECT b.bucket_start, COALESCE(agg.spend_micros, 0) AS spend_micros
             FROM buckets b
