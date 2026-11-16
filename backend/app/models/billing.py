@@ -155,6 +155,8 @@ class CreditTransactionType(str, enum.Enum):
     PURCHASE = "PURCHASE"
     USAGE = "USAGE"
     GPU_USAGE = "GPU_USAGE"
+    STORAGE_USAGE = "STORAGE_USAGE"  # hourly persistent workspace storage (spec §7)
+    STORAGE_PREPAID = "STORAGE_PREPAID"  # one-off 30-day prepaid storage commitment (spec §7)
     ADJUSTMENT = "ADJUSTMENT"
     REFUND = "REFUND"
 
@@ -182,6 +184,10 @@ class CreditTransaction(UUIDPKMixin, Base):
     # high-volume ledger and both fields are optional traceability links,
     # not integrity-critical relationships.
     gpu_instance_id: Mapped[Optional[uuid.UUID]] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
+    # Set only for CreditTransactionType.STORAGE_USAGE / STORAGE_PREPAID rows
+    # (see workspace_storage.py). Same rationale as gpu_instance_id: optional
+    # traceability link on a high-volume ledger, not a hard FK.
+    workspace_id: Mapped[Optional[uuid.UUID]] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
 
 
 class AccountStatement(UUIDPKMixin, Base):

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.models.billing import Plan, PlanCode, Subscription
 from app.models.compute import BookingDuration, GpuInstance, GpuInstanceStatus, GpuType, PaymentMode, SshKey
 from app.models.org import Organization
+from app.models.workspace import WorkspaceStatus
 from app.services import credits as credits_service
 from app.services import ssh_keys as ssh_key_service
 
@@ -78,6 +79,14 @@ class InsufficientWalletBalanceError(GpuRentalError):
 
 
 class RentalNotFoundError(GpuRentalError):
+    pass
+
+
+class WorkspaceNotFoundError(GpuRentalError):
+    pass
+
+
+class WorkspaceOccupiedError(GpuRentalError):
     pass
 
 
@@ -174,9 +183,10 @@ def create_rental(
     org: Organization,
     gpu_type_slug: str,
     storage_gb: int,
-    ssh_key_id: uuid.UUID,
+    ssh_key_id: Optional[uuid.UUID],
     payment_mode: PaymentMode,
     booking_duration: Optional[BookingDuration],
+    workspace_id: Optional[uuid.UUID] = None,
 ) -> CreateRentalResult:
     plan = get_plan_for_org(db, organization_id)
 
@@ -191,7 +201,28 @@ def create_rental(
             f"Your plan allows up to {plan.gpu_max_storage_gb}GB of storage per rental"
         )
 
-    ssh_key = ssh_key_service.get_org_ssh_key(db, organization_id, ssh_key_id)
+    workspace = None
+    if workspace_id is not None:
+        from app.services import workspaces as workspace_service
+
+        workspace = workspace_service.get_org_workspace(db, organization_id, workspace_id)
+        if workspace is None:
+            raise WorkspaceNotFoundError("Workspace not found")
+        if workspace.status != WorkspaceStatus.ACTIVE:
+            raise InvalidRentalStateError("Workspace is deleted")
+        # One active compute attachment per workspace at launch (spec §22).
+        if workspace_service.workspace_has_active_rental(db, workspace.id):
+            raise WorkspaceOccupiedError("Another active GPU rental is already attached to this workspace")
+
+    ssh_key = (
+        ssh_key_service.get_org_ssh_key(db, organization_id, ssh_key_id)
+        if ssh_key_id is not None
+        else None
+    )
+    if ssh_key is None and workspace is not None and workspace.ssh_key_id is not None:
+        # A workspace carries its own persistent SSH identity (spec §5/§22) —
+        # a rental attached to it inherits that key unless one is explicit.
+        ssh_key = ssh_key_service.get_org_ssh_key(db, organization_id, workspace.ssh_key_id)
     if ssh_key is None:
         raise SshKeyNotFoundError("SSH key not found")
 
@@ -226,6 +257,7 @@ def create_rental(
             created_by_user_id=user_id,
             gpu_type_id=gpu_type.id,
             ssh_key_id=ssh_key.id,
+            workspace_id=workspace.id if workspace is not None else None,
             status=GpuInstanceStatus.PROVISIONING,
             payment_mode=PaymentMode.PAY_AS_YOU_GO,
             storage_gb=storage_gb,
@@ -266,6 +298,7 @@ def create_rental(
         created_by_user_id=user_id,
         gpu_type_id=gpu_type.id,
         ssh_key_id=ssh_key.id,
+        workspace_id=workspace.id if workspace is not None else None,
         status=GpuInstanceStatus.PENDING_PAYMENT,
         payment_mode=PaymentMode.BOOKING,
         booking_duration=booking_duration,

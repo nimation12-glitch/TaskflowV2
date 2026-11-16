@@ -35,6 +35,7 @@ from app.database import SessionLocal
 from app.models.billing import Plan, PlanCode
 from app.models.catalog import AiModel, HostingMode, ModelEntitlement, ModelPricing, ModelStatus, Provider, ProviderKind
 from app.models.compute import GpuTier, GpuType
+from app.models.workspace import StorageSize
 from app.providers.registry import configured_providers
 
 PLAN_DEFAULTS = [
@@ -280,6 +281,33 @@ LEGACY_RENAMES = {
     "max": "a10g-medium",
 }
 
+# Persistent-storage catalogue — the product spec §7 storage pricing table.
+# Hourly price is charged only for PAID sizes (a size equal to the plan's
+# workspace_storage_gb is the plan entitlement and is never billed); the
+# prepaid price is the one-off 30-day commitment. available_plans encodes the
+# per-plan size matrix (Free: 50/100/250GB; Pro/Ultra: 500GB/1/2/5TB; Max:
+# 1/2/5/10TB). All rows seed enabled=False: paid storage stays unpurchasable
+# until real storage provisioning lands (Phase 3) — the same rollout switch
+# as GPU SKUs. A plan's included size is always creatable regardless.
+STORAGE_SIZE_DEFAULTS = [
+    dict(size_gb=50, display_name="50 GB", hourly_price_micros=10_000,
+         prepaid_price_micros=5_990_000, available_plans=["FREE"]),
+    dict(size_gb=100, display_name="100 GB", hourly_price_micros=20_000,
+         prepaid_price_micros=9_990_000, available_plans=["FREE"]),
+    dict(size_gb=250, display_name="250 GB", hourly_price_micros=40_000,
+         prepaid_price_micros=19_990_000, available_plans=["FREE"]),
+    dict(size_gb=500, display_name="500 GB", hourly_price_micros=70_000,
+         prepaid_price_micros=34_990_000, available_plans=["PRO", "ULTRA"]),
+    dict(size_gb=1024, display_name="1 TB", hourly_price_micros=140_000,
+         prepaid_price_micros=69_990_000, available_plans=["PRO", "ULTRA", "MAX"]),
+    dict(size_gb=2048, display_name="2 TB", hourly_price_micros=270_000,
+         prepaid_price_micros=134_990_000, available_plans=["PRO", "ULTRA", "MAX"]),
+    dict(size_gb=5120, display_name="5 TB", hourly_price_micros=650_000,
+         prepaid_price_micros=324_990_000, available_plans=["PRO", "ULTRA", "MAX"]),
+    dict(size_gb=10240, display_name="10 TB", hourly_price_micros=1_250_000,
+         prepaid_price_micros=624_990_000, available_plans=["MAX"]),
+]
+
 PROVIDER_DEFAULTS = [
     (ProviderKind.NVIDIA, "NVIDIA"),
     (ProviderKind.MOONSHOT, "Moonshot"),
@@ -338,6 +366,17 @@ def run():
             else:
                 db.add(Plan(**defaults))
                 print(f"Plan {defaults['code'].value}: created")
+        db.commit()
+
+        for defaults in STORAGE_SIZE_DEFAULTS:
+            existing = db.execute(
+                select(StorageSize).where(StorageSize.size_gb == defaults["size_gb"])
+            ).scalar_one_or_none()
+            if existing:
+                for k, v in defaults.items():
+                    setattr(existing, k, v)
+            else:
+                db.add(StorageSize(enabled=False, **defaults))
         db.commit()
 
         settings = get_settings()
@@ -440,6 +479,7 @@ def run():
         print("Seed complete.")
         print(f"Plans in DB now: {plans_now}")
         print(f"GPU catalogue: {total} SKUs seeded ({inserted} new, {total - inserted} updated in place), all enabled=False until a regional AMI is resolved.")
+        print(f"Storage catalogue: {len(STORAGE_SIZE_DEFAULTS)} sizes seeded, all enabled=False until storage provisioning lands.")
         print(f"Configured providers: {sorted(configured) or '(none - set provider API keys in .env)'}")
     finally:
         db.close()

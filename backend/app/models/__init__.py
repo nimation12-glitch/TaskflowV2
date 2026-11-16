@@ -33,4 +33,10 @@ from app.models.compute import (  # noqa: F401
     BookingDuration,
     SshKey,
 )
+from app.models.workspace import (  # noqa: F401
+    Workspace,
+    WorkspaceStatus,
+    StorageBillingMode,
+    StorageSize,
+)
 from app.models.system import SystemSetting  # noqa: F401

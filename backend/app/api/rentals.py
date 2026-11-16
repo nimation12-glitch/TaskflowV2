@@ -26,7 +26,8 @@ _BOOKING_DURATION_FROM_API = {"day": BookingDuration.DAY, "week": BookingDuratio
 class CreateRentalRequest(BaseModel):
     gpu_type_slug: str
     storage_gb: int
-    ssh_key_id: str
+    ssh_key_id: Optional[str] = None  # defaults to the attached workspace's SSH identity
+    workspace_id: Optional[str] = None
     payment_mode: Literal["pay_as_you_go", "booking"]
     booking_duration: Optional[Literal["day", "week"]] = None
 
@@ -37,6 +38,7 @@ def _serialize(instance: GpuInstance, db: Session) -> dict:
     return {
         "id": str(instance.id),
         "gpu_type_slug": instance.gpu_type.slug if instance.gpu_type else None,
+        "workspace_id": str(instance.workspace_id) if instance.workspace_id else None,
         "storage_gb": instance.storage_gb,
         "status": instance.status.value,
         "payment_mode": _PAYMENT_MODE_TO_API[instance.payment_mode],
@@ -75,9 +77,10 @@ def create_rental(
         raise HTTPException(404, "Organization not found")
 
     try:
-        ssh_key_uuid = uuid.UUID(body.ssh_key_id)
+        ssh_key_uuid = _parse_optional_uuid(body.ssh_key_id, "ssh_key_id")
+        workspace_uuid = _parse_optional_uuid(body.workspace_id, "workspace_id")
     except ValueError:
-        raise HTTPException(400, "Invalid ssh_key_id")
+        raise HTTPException(400, "Invalid id")
 
     payment_mode = _PAYMENT_MODE_FROM_API[body.payment_mode]
     booking_duration = _BOOKING_DURATION_FROM_API.get(body.booking_duration) if body.booking_duration else None
@@ -93,9 +96,14 @@ def create_rental(
             ssh_key_id=ssh_key_uuid,
             payment_mode=payment_mode,
             booking_duration=booking_duration,
+            workspace_id=workspace_uuid,
         )
         db.commit()
-    except (gpu_rental_service.GpuTierNotFoundError, gpu_rental_service.SshKeyNotFoundError) as exc:
+    except (
+        gpu_rental_service.GpuTierNotFoundError,
+        gpu_rental_service.SshKeyNotFoundError,
+        gpu_rental_service.WorkspaceNotFoundError,
+    ) as exc:
         db.rollback()
         raise HTTPException(404, str(exc))
     except gpu_rental_service.StorageLimitExceededError as exc:
@@ -107,7 +115,10 @@ def create_rental(
     except gpu_rental_service.BookingNotAllowedError as exc:
         db.rollback()
         raise HTTPException(403, str(exc))
-    except gpu_rental_service.ConcurrentRentalLimitError as exc:
+    except (
+        gpu_rental_service.ConcurrentRentalLimitError,
+        gpu_rental_service.WorkspaceOccupiedError,
+    ) as exc:
         db.rollback()
         raise HTTPException(409, str(exc))
     except gpu_rental_service.InsufficientWalletBalanceError as exc:
@@ -186,3 +197,12 @@ def _parse_uuid(value: str) -> uuid.UUID:
         return uuid.UUID(value)
     except ValueError:
         raise HTTPException(400, "Invalid rental id")
+
+
+def _parse_optional_uuid(value: Optional[str], field: str) -> Optional[uuid.UUID]:
+    if value is None:
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field}") from exc

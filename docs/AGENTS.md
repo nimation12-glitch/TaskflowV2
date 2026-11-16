@@ -103,7 +103,27 @@ success. In production, `validate_production_config()` blocks startup when
 required secrets are missing. Preserve this property — a "helpful" mock is
 a real bug here.
 
-## 8. Local development realities
+## 8. Workspaces + persistent storage (spec §4–§7, §22, §25)
+
+A workspace is a persistent environment (named storage + SSH identity) that
+outlives GPU rentals; rentals reference `GpuInstance.workspace_id` and never
+own it, and at most ONE active rental is attached at a time.
+
+- Slots are hard account-level limits (`Plan.included_workspaces`); extra
+  slots are not sold. Deleting a workspace (soft delete) releases the slot.
+- A size equal to `Plan.workspace_storage_gb` is the plan entitlement: it is
+  creatable even when the `StorageSize` row is disabled and is NEVER billed.
+- Paid sizes bill hourly while the workspace exists — GPU running, stopped
+  or released — via lazy metering in `workspace_storage.py` on the same
+  `POST /internal/gpu/sweep` cron. Wallet-empty workspaces are flagged
+  `payment_overdue_at`, never auto-deleted; deletion is always explicit.
+- `30-day prepaid` (`STORAGE_PREPAID`) is a one-off wallet draw; expiry
+  reverts to hourly metering so customer data is never silently destroyed.
+- All `StorageSize` rows seed `enabled=False`: paid storage stays
+  unpurchasable until real storage provisioning lands. Same rule as
+  `GpuType.enabled` — nothing is sold that isn't really provisioned.
+
+## 9. Local development realities
 
 - Windows machines: use `npm.cmd` (execution policy blocks `npm.ps1`).
 - The backend venv is `backend/.venv` (Python 3.11 per `runtime.txt`).

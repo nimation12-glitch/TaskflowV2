@@ -21,6 +21,7 @@ from app.api import (
     usage,
     wallet,
     webhooks,
+    workspaces,
 )
 from app.config import get_settings, validate_production_config
 
@@ -61,6 +62,7 @@ app.include_router(gpu_catalog.router)
 app.include_router(wallet.router)
 app.include_router(ssh_keys.router)
 app.include_router(rentals.router)
+app.include_router(workspaces.router)
 
 
 @app.get("/health")

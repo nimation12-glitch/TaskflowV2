@@ -111,6 +111,14 @@ class GpuInstance(UUIDPKMixin, TimestampMixin, Base):
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     gpu_type_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("gpu_types.id"), nullable=False)
     ssh_key_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("ssh_keys.id"), nullable=False)
+    # Persistent workspace this rental is attached to (spec §22: rentals
+    # reference the workspace, they don't own it). NULL for rentals created
+    # before workspaces existed. At launch only ONE active rental may be
+    # attached to a workspace at a time (spec §22) — enforced in
+    # gpu_rentals.create_rental.
+    workspace_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True, index=True
+    )
 
     status: Mapped[GpuInstanceStatus] = mapped_column(
         Enum(GpuInstanceStatus), default=GpuInstanceStatus.PENDING_PAYMENT, nullable=False, index=True

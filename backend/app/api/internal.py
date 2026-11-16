@@ -10,6 +10,7 @@ from app.auth.service import require_gpu_sweep_secret, require_service_secret
 from app.database import get_db
 from app.services import gpu_billing
 from app.services import org as org_service
+from app.services import workspace_storage
 
 router = APIRouter(prefix="/internal", tags=["internal"], dependencies=[Depends(require_service_secret)])
 
@@ -23,6 +24,9 @@ gpu_sweep_router = APIRouter(prefix="/internal/gpu", tags=["internal"], dependen
 @gpu_sweep_router.post("/sweep")
 def sweep_gpu_instances(db: Session = Depends(get_db)):
     result = gpu_billing.run_safety_sweep(db)
+    # Persistent storage rides the same cron — it bills while a workspace
+    # exists (spec §7), with or without an attached GPU.
+    storage_result = workspace_storage.run_storage_sweep(db)
     db.commit()
     return {
         "checked": result.checked,
@@ -30,6 +34,13 @@ def sweep_gpu_instances(db: Session = Depends(get_db)):
         "auto_stopped": result.auto_stopped,
         "auto_terminated": result.auto_terminated,
         "marked_failed": result.marked_failed,
+        # Additive (existing keys above unchanged — cron contract preserved):
+        "storage": {
+            "checked": storage_result.checked,
+            "billed": storage_result.billed,
+            "overdue_flagged": storage_result.overdue_flagged,
+            "prepaid_reverted": storage_result.prepaid_reverted,
+        },
     }
 
 
