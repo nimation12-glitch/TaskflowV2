@@ -398,7 +398,7 @@ def test_rental_attaches_to_workspace_and_inherits_ssh_key(db_session, pro_org, 
     with patch("app.compute.aws_provider.launch_instance") as launch, patch(
         "app.compute.aws_provider.import_ssh_key"
     ) as import_key:
-        launch.return_value = ("i-123", "pending")
+        launch.return_value = ("i-123", "pending", "eu-west-2a")
         import_key.return_value = f"taskflow-{uuid.uuid4().hex[:8]}"
         result = gpu_rentals.create_rental(
             db_session,
@@ -419,7 +419,7 @@ def test_rental_attaches_to_workspace_and_inherits_ssh_key(db_session, pro_org, 
     with patch("app.compute.aws_provider.launch_instance") as launch, patch(
         "app.compute.aws_provider.import_ssh_key"
     ) as import_key:
-        launch.return_value = ("i-124", "pending")
+        launch.return_value = ("i-124", "pending", "eu-west-2a")
         import_key.return_value = f"taskflow-{uuid.uuid4().hex[:8]}"
         with pytest.raises(gpu_rentals.WorkspaceOccupiedError):
             gpu_rentals.create_rental(

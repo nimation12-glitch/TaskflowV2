@@ -93,7 +93,7 @@ def _force_stop(db: Session, instance: GpuInstance, *, reason: str) -> None:
 
     try:
         if instance.aws_instance_id:
-            aws_provider.stop_instance(instance.aws_instance_id)
+            aws_provider.stop_instance(instance.aws_instance_id, region_name=instance.region_code)
     except aws_provider.AwsProviderError as exc:
         # Fail loudly in logs — an instance we believe should be stopped but
         # AWS rejected the stop call is exactly the "silently burn AWS spend"
@@ -115,7 +115,7 @@ def _force_terminate(db: Session, instance: GpuInstance, *, reason: str) -> None
 
     try:
         if instance.aws_instance_id:
-            aws_provider.terminate_instance(instance.aws_instance_id)
+            aws_provider.terminate_instance(instance.aws_instance_id, region_name=instance.region_code)
     except aws_provider.AwsProviderError as exc:
         logger.error("Failed to auto-terminate instance %s (%s): %s", instance.id, reason, exc)
         instance.error_detail = f"Auto-terminate failed, needs manual attention: {exc}"[:500]
@@ -142,7 +142,7 @@ def refresh_provisioning_instance(db: Session, instance: GpuInstance) -> None:
     from app.compute import aws_provider
 
     try:
-        status = aws_provider.get_instance_status(instance.aws_instance_id)
+        status = aws_provider.get_instance_status(instance.aws_instance_id, region_name=instance.region_code)
     except aws_provider.AwsProviderError as exc:
         logger.warning("Could not refresh status for instance %s: %s", instance.id, exc)
         return
@@ -150,6 +150,7 @@ def refresh_provisioning_instance(db: Session, instance: GpuInstance) -> None:
     if status.state == "running":
         instance.status = GpuInstanceStatus.RUNNING
         instance.public_ip = status.public_ip
+        instance.availability_zone = instance.availability_zone or status.availability_zone
         instance.started_at = instance.started_at or datetime.now(timezone.utc)
         instance.last_billed_at = datetime.now(timezone.utc)
         db.flush()

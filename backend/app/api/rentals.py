@@ -30,6 +30,9 @@ class CreateRentalRequest(BaseModel):
     workspace_id: Optional[str] = None
     payment_mode: Literal["pay_as_you_go", "booking"]
     booking_duration: Optional[Literal["day", "week"]] = None
+    # Spec §13: customers pick a GPU, not a region — but may hint at one.
+    # "automatic" (default) lets the scheduler choose freely.
+    location_preference: Literal["automatic", "uk", "europe", "north_america", "asia"] = "automatic"
 
 
 def _serialize(instance: GpuInstance, db: Session) -> dict:
@@ -51,6 +54,12 @@ def _serialize(instance: GpuInstance, db: Session) -> dict:
         "booking_expires_at": instance.booking_expires_at.isoformat() if instance.booking_expires_at else None,
         "error_detail": instance.error_detail,
         "hourly_rate_micros": instance.hourly_rate_micros,
+        # Launch geography + price decomposition (§13/§24): the frontend shows
+        # "Region: automatically selected" plus what the hourly price is made
+        # of. region_code is None only for pre-Phase-3 legacy rows.
+        "region_code": instance.region_code,
+        "availability_zone": instance.availability_zone,
+        "regional_premium_micros": instance.regional_premium_micros,
     }
 
 
@@ -97,6 +106,7 @@ def create_rental(
             payment_mode=payment_mode,
             booking_duration=booking_duration,
             workspace_id=workspace_uuid,
+            location_preference=body.location_preference,
         )
         db.commit()
     except (
@@ -124,6 +134,11 @@ def create_rental(
     except gpu_rental_service.InsufficientWalletBalanceError as exc:
         db.rollback()
         raise HTTPException(402, str(exc))
+    except gpu_rental_service.NoRegionAvailableError as exc:
+        # Spec §19: no supported region is currently viable — "Temporarily
+        # unavailable". 503 tells the client this is retryable, not their fault.
+        db.rollback()
+        raise HTTPException(503, str(exc))
     except gpu_rental_service.ProvisioningFailedError as exc:
         # The GpuInstance row was already committed as FAILED inside the
         # service before this was raised, so the failure is visible in the

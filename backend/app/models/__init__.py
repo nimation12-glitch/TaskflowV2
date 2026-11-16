@@ -39,4 +39,10 @@ from app.models.workspace import (  # noqa: F401
     StorageBillingMode,
     StorageSize,
 )
+from app.models.region import (  # noqa: F401
+    Region,
+    RegionStatus,
+    GpuRegionAvailability,
+    GpuRegionStatus,
+)
 from app.models.system import SystemSetting  # noqa: F401

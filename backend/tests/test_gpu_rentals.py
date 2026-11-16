@@ -149,8 +149,10 @@ def test_cannot_see_or_act_on_another_orgs_rental(db_session, organization, gpu_
 def test_create_payg_rental_provisions_via_aws(db_session, organization, gpu_type, ssh_key, monkeypatch):
     _fund_wallet(db_session, organization.id)
 
-    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name: unique_name)
-    monkeypatch.setattr(aws_provider, "launch_instance", lambda *a, **k: ("i-mockinstance123", "pending"))
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
+    monkeypatch.setattr(
+        aws_provider, "launch_instance", lambda *a, **k: ("i-mockinstance123", "pending", "us-east-1a")
+    )
 
     result = gpu_rental_service.create_rental(
         db_session, organization_id=organization.id, user_id=uuid.uuid4(), org=organization,
@@ -165,7 +167,7 @@ def test_create_payg_rental_provisions_via_aws(db_session, organization, gpu_typ
 def test_aws_launch_failure_marks_instance_failed_not_silently(db_session, organization, gpu_type, ssh_key, monkeypatch):
     _fund_wallet(db_session, organization.id)
 
-    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name: unique_name)
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
 
     def _boom(*a, **k):
         raise aws_provider.AwsRequestError("simulated AWS outage")
@@ -199,7 +201,7 @@ def test_stop_bills_elapsed_time_and_calls_aws(db_session, organization, gpu_typ
     db_session.commit()
 
     stop_calls = []
-    monkeypatch.setattr(aws_provider, "stop_instance", lambda iid: stop_calls.append(iid))
+    monkeypatch.setattr(aws_provider, "stop_instance", lambda iid, region_name=None: stop_calls.append(iid))
 
     balance_before = credits_service.get_or_create_account(db_session, organization.id).balance_micros
     gpu_rental_service.stop_rental(db_session, organization.id, instance.id)
@@ -227,7 +229,7 @@ def test_start_rechecks_balance_and_provisions(db_session, organization, gpu_typ
         gpu_rental_service.start_rental(db_session, organization.id, instance.id)
 
     _fund_wallet(db_session, organization.id, amount_micros=2_000_000)
-    monkeypatch.setattr(aws_provider, "start_instance", lambda iid: None)
+    monkeypatch.setattr(aws_provider, "start_instance", lambda iid, region_name=None: None)
     result = gpu_rental_service.start_rental(db_session, organization.id, instance.id)
     assert result.status == GpuInstanceStatus.PROVISIONING
 
@@ -242,7 +244,7 @@ def test_terminate_calls_aws_and_is_terminal(db_session, organization, gpu_type,
     db_session.commit()
 
     terminate_calls = []
-    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid: terminate_calls.append(iid))
+    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid, region_name=None: terminate_calls.append(iid))
 
     result = gpu_rental_service.terminate_rental(db_session, organization.id, instance.id)
     assert terminate_calls == ["i-abc"]

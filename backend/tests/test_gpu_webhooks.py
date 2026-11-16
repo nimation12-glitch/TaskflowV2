@@ -37,8 +37,8 @@ def test_gpu_booking_webhook_provisions_and_sets_expiry(db_session, organization
     db_session.add(instance)
     db_session.commit()
 
-    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name: unique_name)
-    monkeypatch.setattr(aws_provider, "launch_instance", lambda *a, **k: ("i-booked-123", "pending"))
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
+    monkeypatch.setattr(aws_provider, "launch_instance", lambda *a, **k: ("i-booked-123", "pending", "us-east-1a"))
 
     session = {
         "id": "cs_test_2",
@@ -70,9 +70,9 @@ def test_gpu_booking_webhook_retry_does_not_double_provision(db_session, organiz
 
     def _launch(*a, **k):
         launch_calls.append(1)
-        return ("i-once-only", "pending")
+        return ("i-once-only", "pending", "us-east-1a")
 
-    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name: unique_name)
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
     monkeypatch.setattr(aws_provider, "launch_instance", _launch)
 
     session = {
@@ -106,7 +106,7 @@ def test_gpu_booking_webhook_marks_failed_if_aws_launch_fails_after_payment(db_s
     db_session.add(instance)
     db_session.commit()
 
-    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name: unique_name)
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
 
     def _boom(*a, **k):
         raise aws_provider.AwsRequestError("simulated capacity error")

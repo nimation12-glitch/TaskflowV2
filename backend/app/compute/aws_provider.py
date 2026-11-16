@@ -5,13 +5,15 @@ API call fails, every function here raises a typed exception rather than
 pretending an instance is running when it isn't. This mirrors the same
 discipline as app/billing/stripe_service.py.
 
-Required IAM policy (least privilege, scoped to the configured region only —
+Required IAM policy (least privilege, scoped to the launch regions —
 see infra/aws-iam-policy.json for a ready-to-attach JSON document):
   ec2:RunInstances, ec2:StopInstances, ec2:StartInstances,
   ec2:TerminateInstances, ec2:DescribeInstances, ec2:DescribeImages,
   ec2:CreateTags, ec2:ImportKeyPair, ec2:DeleteKeyPair
+  ssm:GetParameter (public Deep Learning AMI parameters — regional AMI
+  resolution, see app/compute/ami_resolver.py)
 
-Do NOT attach broader EC2 permissions than this list.
+Do NOT attach broader permissions than this list.
 """
 from __future__ import annotations
 
@@ -51,14 +53,28 @@ class AwsInstanceStateError(AwsRequestError):
 class InstanceStatus:
     state: str  # AWS's own state string: pending/running/stopping/stopped/shutting-down/terminated
     public_ip: Optional[str]
+    availability_zone: Optional[str] = None
 
 
-def _client():
+class AwsInsufficientCapacityError(AwsRequestError):
+    """
+    EC2 reported InsufficientInstanceCapacity: it could not fit this instance
+    type in the requested region/AZ right now. The scheduler (spec §13) uses
+    this to fall back to the next candidate region — it is an expected,
+    recoverable provisioning outcome, not a platform bug.
+    """
+
+
+def _client(region_name: Optional[str] = None):
     """
     Lazily constructs a boto3 EC2 client. Imported inside the function (not at
     module load) so environments without boto3/AWS configured can still import
     this module (e.g. for type references) without crashing at import time —
     the actual AWS call is what must fail loudly, not the import.
+
+    region_name selects the launch region (spec §13: the scheduler picks the
+    region; the provider must never silently launch into settings.aws_region
+    when told to launch elsewhere). None keeps the legacy configured region.
     """
     settings = get_settings()
     if not settings.aws_access_key_id or not settings.aws_secret_access_key:
@@ -73,7 +89,7 @@ def _client():
 
     return boto3.client(
         "ec2",
-        region_name=settings.aws_region,
+        region_name=region_name or settings.aws_region,
         aws_access_key_id=settings.aws_access_key_id,
         aws_secret_access_key=settings.aws_secret_access_key,
     )
@@ -87,17 +103,22 @@ def _wrap_client_error(exc: Exception, context: str) -> AwsRequestError:
         message = exc.response.get("Error", {}).get("Message", str(exc))
         if code in ("IncorrectInstanceState", "IncorrectState"):
             return AwsInstanceStateError(f"{context}: {message}", aws_error_code=code)
+        if code == "InsufficientInstanceCapacity":
+            return AwsInsufficientCapacityError(f"{context}: {message}", aws_error_code=code)
         return AwsRequestError(f"{context}: {message}", aws_error_code=code)
     return AwsRequestError(f"{context}: {exc}")
 
 
-def import_ssh_key(public_key: str, unique_name: str) -> str:
+def import_ssh_key(public_key: str, unique_name: str, region_name: Optional[str] = None) -> str:
     """
     Wraps ec2:ImportKeyPair. Call once per SshKey record (lazily, cached onto
     SshKey.aws_key_pair_name) rather than re-importing on every rental.
     Returns the AWS key pair name to use in launch_instance's KeyName param.
+
+    Key pairs are REGIONAL resources (see services/ssh_keys.py): the caller
+    passes the launch region so the key exists where the instance will.
     """
-    client = _client()
+    client = _client(region_name)
     try:
         client.import_key_pair(KeyName=unique_name, PublicKeyMaterial=public_key.encode("utf-8"))
     except Exception as exc:
@@ -110,9 +131,9 @@ def import_ssh_key(public_key: str, unique_name: str) -> str:
     return unique_name
 
 
-def delete_ssh_key(aws_key_pair_name: str) -> None:
+def delete_ssh_key(aws_key_pair_name: str, region_name: Optional[str] = None) -> None:
     """Wraps ec2:DeleteKeyPair. Called when an SshKey is deleted from the account."""
-    client = _client()
+    client = _client(region_name)
     try:
         client.delete_key_pair(KeyName=aws_key_pair_name)
     except Exception as exc:
@@ -120,30 +141,51 @@ def delete_ssh_key(aws_key_pair_name: str) -> None:
 
 
 def launch_instance(
-    gpu_type: GpuType, storage_gb: int, aws_key_pair_name: str, tags: dict[str, str]
-) -> tuple[str, str]:
+    gpu_type: GpuType,
+    storage_gb: int,
+    aws_key_pair_name: str,
+    tags: dict[str, str],
+    *,
+    region_name: Optional[str] = None,
+    ami_id: Optional[str] = None,
+    availability_zone: Optional[str] = None,
+) -> tuple[str, str, Optional[str]]:
     """
     Wraps ec2:RunInstances with a gp3 EBS root volume sized to storage_gb,
     the given key pair, and tags identifying which GpuInstance.id this maps
-    to (critical for reconciliation/debugging). Returns (aws_instance_id, initial_state).
+    to (critical for reconciliation/debugging).
+
+    region_name + ami_id are the multi-region launch path (spec §13/§15):
+    the scheduler resolves the region and the REGIONAL AMI (AMI ids are
+    regional and must never be copied between regions), and both are passed
+    here explicitly. When omitted, falls back to the legacy single-region
+    behaviour: settings.aws_region + gpu_type.ami_id.
+
+    Returns (aws_instance_id, initial_state, availability_zone) — AWS picks
+    the AZ inside the region unless one is pinned, and the response reports
+    which one it actually used; recording that is what makes AZ balancing
+    measurable later (spec §13).
     """
-    if not gpu_type.ami_id:
+    effective_ami = ami_id or gpu_type.ami_id
+    if not effective_ami:
         raise AwsProviderError(
-            f"GpuType '{gpu_type.slug}' has no ami_id configured — refusing to launch "
-            "an instance from an unset AMI. Set GpuType.ami_id first."
+            f"GpuType '{gpu_type.slug}' has no ami_id configured for region "
+            f"'{region_name or 'default'}' — refusing to launch an instance from an "
+            "unset AMI. Resolve the regional AMI via SSM first."
         )
 
-    client = _client()
+    client = _client(region_name)
+    region_used = region_name or get_settings().aws_region
 
     # Resize the AMI's own root volume rather than guessing a device name —
     # this is correct regardless of the AMI's actual root device (/dev/sda1,
     # /dev/xvda, etc.), and never silently launches with the wrong device.
     try:
-        images = client.describe_images(ImageIds=[gpu_type.ami_id])["Images"]
+        images = client.describe_images(ImageIds=[effective_ami])["Images"]
     except Exception as exc:
-        raise _wrap_client_error(exc, f"Failed to describe AMI '{gpu_type.ami_id}'") from exc
+        raise _wrap_client_error(exc, f"Failed to describe AMI '{effective_ami}'") from exc
     if not images:
-        raise AwsProviderError(f"AMI '{gpu_type.ami_id}' was not found in region {gpu_type.aws_region}")
+        raise AwsProviderError(f"AMI '{effective_ami}' was not found in region {region_used}")
     image = images[0]
     root_device_name = image["RootDeviceName"]
     block_device_mappings = [
@@ -164,56 +206,61 @@ def launch_instance(
         }
     ]
 
+    run_params: dict = dict(
+        ImageId=effective_ami,
+        InstanceType=gpu_type.aws_instance_type,
+        KeyName=aws_key_pair_name,
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=block_device_mappings,
+        TagSpecifications=tag_specifications,
+    )
+    if availability_zone:
+        run_params["Placement"] = {"AvailabilityZone": availability_zone}
+
     try:
-        response = client.run_instances(
-            ImageId=gpu_type.ami_id,
-            InstanceType=gpu_type.aws_instance_type,
-            KeyName=aws_key_pair_name,
-            MinCount=1,
-            MaxCount=1,
-            BlockDeviceMappings=block_device_mappings,
-            TagSpecifications=tag_specifications,
-        )
+        response = client.run_instances(**run_params)
     except Exception as exc:
         raise _wrap_client_error(exc, "Failed to launch EC2 instance") from exc
 
     instance = response["Instances"][0]
-    return instance["InstanceId"], instance["State"]["Name"]
+    az = (instance.get("Placement") or {}).get("AvailabilityZone")
+    return instance["InstanceId"], instance["State"]["Name"], az
 
 
-def stop_instance(aws_instance_id: str) -> None:
-    """Wraps ec2:StopInstances."""
-    client = _client()
+def stop_instance(aws_instance_id: str, region_name: Optional[str] = None) -> None:
+    """Wraps ec2:StopInstances. region_name must match where the instance lives."""
+    client = _client(region_name)
     try:
         client.stop_instances(InstanceIds=[aws_instance_id])
     except Exception as exc:
         raise _wrap_client_error(exc, f"Failed to stop instance '{aws_instance_id}'") from exc
 
 
-def start_instance(aws_instance_id: str) -> None:
-    """Wraps ec2:StartInstances."""
-    client = _client()
+def start_instance(aws_instance_id: str, region_name: Optional[str] = None) -> None:
+    """Wraps ec2:StartInstances. region_name must match where the instance lives."""
+    client = _client(region_name)
     try:
         client.start_instances(InstanceIds=[aws_instance_id])
     except Exception as exc:
         raise _wrap_client_error(exc, f"Failed to start instance '{aws_instance_id}'") from exc
 
 
-def terminate_instance(aws_instance_id: str) -> None:
-    """Wraps ec2:TerminateInstances."""
-    client = _client()
+def terminate_instance(aws_instance_id: str, region_name: Optional[str] = None) -> None:
+    """Wraps ec2:TerminateInstances. region_name must match where the instance lives."""
+    client = _client(region_name)
     try:
         client.terminate_instances(InstanceIds=[aws_instance_id])
     except Exception as exc:
         raise _wrap_client_error(exc, f"Failed to terminate instance '{aws_instance_id}'") from exc
 
 
-def get_instance_status(aws_instance_id: str) -> InstanceStatus:
+def get_instance_status(aws_instance_id: str, region_name: Optional[str] = None) -> InstanceStatus:
     """
     Wraps ec2:DescribeInstances. Public IP is only assigned once running —
     may be None while provisioning or after stopping.
     """
-    client = _client()
+    client = _client(region_name)
     try:
         response = client.describe_instances(InstanceIds=[aws_instance_id])
     except Exception as exc:
@@ -226,4 +273,5 @@ def get_instance_status(aws_instance_id: str) -> InstanceStatus:
     return InstanceStatus(
         state=instance["State"]["Name"],
         public_ip=instance.get("PublicIpAddress"),
+        availability_zone=(instance.get("Placement") or {}).get("AvailabilityZone"),
     )

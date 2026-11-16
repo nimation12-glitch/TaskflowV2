@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, JSON, String
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -136,6 +136,16 @@ class GpuInstance(UUIDPKMixin, TimestampMixin, Base):
 
     aws_instance_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     public_ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Launch geography (spec §13: customers pick a GPU, not a region; the
+    # scheduler picks it). NULL for legacy rows launched before regions
+    # existed — those implicitly ran in settings.aws_region.
+    region_code: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    availability_zone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Snapshotted regional service premium included in hourly_rate_micros
+    # (spec §24: base + premium + [storage] = customer price). Snapshot at
+    # launch; later premium changes never retroactively reprice a running
+    # rental (same rule as hourly_rate_micros).
+    regional_premium_micros: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -165,4 +175,10 @@ class SshKey(UUIDPKMixin, Base):
     # Cached AWS key pair name once imported (see aws_provider.import_ssh_key).
     # Imported lazily on first use, not at creation time.
     aws_key_pair_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # EC2 key pairs are REGIONAL resources. This records which regions the
+    # key has been imported into (see ensure_aws_key_pair) — a key used for a
+    # Stockholm launch must exist in eu-north-1, not just us-east-1. Legacy
+    # rows have a name but an empty list: they were imported into
+    # settings.aws_region only.
+    aws_key_pair_regions: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

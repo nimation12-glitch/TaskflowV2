@@ -12,6 +12,7 @@ import hashlib
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -150,19 +151,33 @@ def delete_ssh_key(db: Session, organization_id: uuid.UUID, ssh_key_id: uuid.UUI
     return row
 
 
-def ensure_aws_key_pair(db: Session, ssh_key: SshKey) -> str:
+def ensure_aws_key_pair(db: Session, ssh_key: SshKey, region_name: Optional[str] = None) -> str:
     """
     Lazily imports the key into AWS on first use and caches the resulting
     key pair name onto the SshKey row. Idempotent — safe to call every time
     a rental is created with this key.
+
+    EC2 key pairs are REGIONAL resources: launching in eu-north-1 with a key
+    that only exists in us-east-1 fails at RunInstances. So the key is
+    imported per launch region and the regions tracked on
+    SshKey.aws_key_pair_regions (same key pair name in each region).
+    Legacy rows have a name but an empty region list — their first
+    region-tagged use imports into that region and appends it.
     """
-    if ssh_key.aws_key_pair_name:
+    from app.config import get_settings
+
+    region = region_name or get_settings().aws_region
+    regions = list(ssh_key.aws_key_pair_regions or [])
+    if ssh_key.aws_key_pair_name and region in regions:
         return ssh_key.aws_key_pair_name
 
     from app.compute import aws_provider
 
-    unique_name = f"taskflow-{ssh_key.id}"
-    aws_key_pair_name = aws_provider.import_ssh_key(ssh_key.public_key, unique_name)
+    unique_name = ssh_key.aws_key_pair_name or f"taskflow-{ssh_key.id}"
+    aws_key_pair_name = aws_provider.import_ssh_key(ssh_key.public_key, unique_name, region_name=region)
     ssh_key.aws_key_pair_name = aws_key_pair_name
+    if region not in regions:
+        regions.append(region)
+        ssh_key.aws_key_pair_regions = regions  # reassign so SQLAlchemy detects the JSON change
     db.flush()
     return aws_key_pair_name

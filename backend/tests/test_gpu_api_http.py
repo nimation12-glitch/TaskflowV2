@@ -74,8 +74,8 @@ def test_create_rental_over_http_full_flow(db_session, organization, gpu_type, s
     )
     db_session.commit()
 
-    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name: unique_name)
-    monkeypatch.setattr(aws_provider, "launch_instance", lambda *a, **k: ("i-http-test", "pending"))
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
+    monkeypatch.setattr(aws_provider, "launch_instance", lambda *a, **k: ("i-http-test", "pending", "us-east-1a"))
 
     client = _client_for(db_session)
     headers = _auth_header(organization.id)

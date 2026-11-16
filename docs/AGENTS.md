@@ -123,7 +123,43 @@ own it, and at most ONE active rental is attached at a time.
   unpurchasable until real storage provisioning lands. Same rule as
   `GpuType.enabled` — nothing is sold that isn't really provisioned.
 
-## 9. Local development realities
+## 9. Regions, the scheduler and regional AMIs (spec §12–§15, §19–§24)
+
+Customers pick a GPU, never an AWS region; they may give a location
+preference (Automatic / UK / Europe / North America / Asia, §13).
+
+- `regions` + `gpu_region_availability` (migration `b8e2f5a7c1d4`) hold the
+  6-region launch matrix seeded by `scripts/seed.py`: exact
+  per-configuration premiums (§12 forbids family premium × GPU count),
+  `NOT_OFFERED` for every spec N/A, and `aws_cost_est = base + premium` for
+  the safe-cost input. Premiums are never plan-discounted (§24).
+- `app/services/scheduler.py` turns the matrix into ordered launch
+  candidates: hard filters (preference, N/A, disabled region, storage/SSH
+  support, safe-cost §19) then ordering by measured startup p50 (§14) and
+  premium. `None` = SKU has no matrix (legacy single-region path via
+  `GpuType.aws_region`/`ami_id`); `[]` = temporarily unavailable (§19,
+  surfaced as 503, never a silent loss-making launch).
+- Capacity is AWS's answer at launch time: `create_rental` walks the
+  candidates and falls back to the next region on
+  `InsufficientInstanceCapacity`, re-snapshotting `hourly_rate_micros` to
+  the region actually launched in. Rate snapshot = discounted base +
+  regional premium + storage add-on, stored with `region_code` /
+  `availability_zone` / `regional_premium_micros` on the rental.
+- Wallet reserve (§20): cover for `minimum_rental_hours` before launch;
+  ULTRA tier (A100/H100) enforces at least 4 hours.
+- AMI ids are regional and must never be copied between regions (§15):
+  `app/compute/ami_resolver.py` resolves them from the public SSM parameter
+  `/aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.13-amazon-linux-2023/latest/ami-id`
+  per region and caches on the availability row with a 24h TTL. SSM failure
+  = region not viable, never a guessed AMI.
+- EC2 key pairs are regional: `SshKey.aws_key_pair_regions` tracks where a
+  key was imported; `ensure_aws_key_pair(db, key, region_name=...)` imports
+  lazily per launch region, and key deletion cleans up every tracked region.
+- `GpuInstance.region_code` is authoritative for every later AWS call
+  (stop/start/terminate/describe in `gpu_billing.py` too) — NULL means
+  legacy instance in `settings.aws_region`.
+
+## 10. Local development realities
 
 - Windows machines: use `npm.cmd` (execution policy blocks `npm.ps1`).
 - The backend venv is `backend/.venv` (Python 3.11 per `runtime.txt`).

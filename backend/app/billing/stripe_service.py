@@ -344,12 +344,30 @@ def handle_checkout_completed(db: Session, event: dict) -> None:
         instance.booking_expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
 
         from app.compute import aws_provider
+        from app.compute import ami_resolver
+        from app.models.region import GpuRegionAvailability, Region
         from app.services import ssh_keys as ssh_key_service
 
         ssh_key = db.get(SshKey, instance.ssh_key_id)
         try:
-            aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(db, ssh_key)
-            aws_instance_id, _initial_state = aws_provider.launch_instance(
+            aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(db, ssh_key, region_name=instance.region_code)
+            ami_id = None
+            if instance.region_code:
+                # Launch in the region the customer was quoted for (§13/§24).
+                # The scheduler already resolved and cached the regional AMI
+                # when the booking was created; this refreshes it if the TTL
+                # lapsed between checkout and payment.
+                availability = db.execute(
+                    select(GpuRegionAvailability)
+                    .join(Region, GpuRegionAvailability.region_id == Region.id)
+                    .where(
+                        GpuRegionAvailability.gpu_type_id == instance.gpu_type_id,
+                        Region.aws_region_code == instance.region_code,
+                    )
+                ).scalar_one_or_none()
+                if availability is not None:
+                    ami_id = ami_resolver.get_or_resolve_ami(db, availability)
+            aws_instance_id, _initial_state, availability_zone = aws_provider.launch_instance(
                 instance.gpu_type,
                 instance.storage_gb,
                 aws_key_pair_name,
@@ -358,6 +376,8 @@ def handle_checkout_completed(db: Session, event: dict) -> None:
                     "taskflow:gpu_instance_id": str(instance.id),
                     "taskflow:organization_id": str(org_id),
                 },
+                region_name=instance.region_code,
+                ami_id=ami_id,
             )
         except aws_provider.AwsProviderError as exc:
             # Stripe has already captured payment at this point. A failed
@@ -370,6 +390,7 @@ def handle_checkout_completed(db: Session, event: dict) -> None:
             return
 
         instance.aws_instance_id = aws_instance_id
+        instance.availability_zone = availability_zone
         instance.status = GpuInstanceStatus.PROVISIONING
         instance.provisioning_started_at = datetime.now(timezone.utc)
         db.flush()

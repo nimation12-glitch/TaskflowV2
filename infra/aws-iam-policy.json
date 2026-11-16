@@ -2,7 +2,7 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "TaskFlowGpuRentalEc2",
+      "Sid": "TaskFlowGpuRentalEc2MultiRegion",
       "Effect": "Allow",
       "Action": [
         "ec2:RunInstances",
@@ -18,9 +18,26 @@
       "Resource": "*",
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "eu-west-2"
+          "aws:RequestedRegion": [
+            "us-east-1",
+            "us-west-2",
+            "eu-north-1",
+            "eu-west-2",
+            "eu-central-1",
+            "ap-northeast-1"
+          ]
         }
       }
+    },
+    {
+      "Sid": "TaskFlowRegionalAmiResolution",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter"
+      ],
+      "Resource": [
+        "arn:aws:ssm:*:*:parameter/aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.13-amazon-linux-2023/latest/ami-id"
+      ]
     }
   ]
 }

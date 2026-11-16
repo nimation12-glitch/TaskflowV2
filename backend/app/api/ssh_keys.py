@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -7,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.auth.internal import RequestContext, require_context
 from app.database import get_db
 from app.services import ssh_keys as ssh_key_service
+
+logger = logging.getLogger("taskflow.api.ssh_keys")
 
 router = APIRouter(prefix="/account/ssh-keys", tags=["ssh-keys"])
 
@@ -74,16 +78,29 @@ def delete_ssh_key(
 
     if key.aws_key_pair_name:
         from app.compute import aws_provider
+        from app.config import get_settings
 
-        try:
-            aws_provider.delete_ssh_key(key.aws_key_pair_name)
-        except aws_provider.AwsProviderError as exc:
-            # The DB row is already deleted in this transaction; don't block
-            # the user on an AWS-side cleanup failure, but don't hide it either.
+        # Key pairs are regional — clean up every region the key was imported
+        # into. Legacy rows predate region tracking and live only in the
+        # configured default region.
+        regions = list(key.aws_key_pair_regions or []) or [get_settings().aws_region]
+        failed_regions: list[str] = []
+        for region in regions:
+            try:
+                aws_provider.delete_ssh_key(key.aws_key_pair_name, region_name=region)
+            except aws_provider.AwsProviderError as exc:
+                # The DB row is already deleted in this transaction; don't
+                # block the user on an AWS-side cleanup failure, but don't
+                # hide it either.
+                logger.warning("AWS key pair cleanup failed in %s: %s", region, exc)
+                failed_regions.append(region)
+
+        if failed_regions:
             db.commit()
             raise HTTPException(
                 502,
-                f"Key removed from your account, but AWS cleanup failed and needs manual attention: {exc}",
+                "Key removed from your account, but AWS cleanup failed in "
+                f"{', '.join(failed_regions)} and needs manual attention",
             )
 
     db.commit()

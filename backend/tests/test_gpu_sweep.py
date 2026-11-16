@@ -30,7 +30,7 @@ def test_sweep_auto_stops_when_balance_insufficient(db_session, organization, gp
     db_session.commit()
 
     stopped = []
-    monkeypatch.setattr(aws_provider, "stop_instance", lambda iid: stopped.append(iid))
+    monkeypatch.setattr(aws_provider, "stop_instance", lambda iid, region_name=None: stopped.append(iid))
 
     result = gpu_billing.run_safety_sweep(db_session)
 
@@ -53,7 +53,7 @@ def test_sweep_auto_terminates_expired_booking(db_session, organization, gpu_typ
     db_session.commit()
 
     terminated = []
-    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid: terminated.append(iid))
+    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid, region_name=None: terminated.append(iid))
 
     result = gpu_billing.run_safety_sweep(db_session)
 
@@ -76,7 +76,7 @@ def test_sweep_auto_terminates_payg_past_max_runtime(db_session, organization, g
     db_session.commit()
 
     terminated = []
-    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid: terminated.append(iid))
+    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid, region_name=None: terminated.append(iid))
 
     result = gpu_billing.run_safety_sweep(db_session)
 
@@ -103,7 +103,7 @@ def test_sweep_does_not_kill_a_paid_booking_shorter_than_default_runtime_cap(db_
     db_session.commit()
 
     terminate_called = []
-    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid: terminate_called.append(iid))
+    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid, region_name=None: terminate_called.append(iid))
 
     result = gpu_billing.run_safety_sweep(db_session)
 
@@ -124,7 +124,7 @@ def test_sweep_marks_stuck_provisioning_as_failed(db_session, organization, gpu_
 
     monkeypatch.setattr(
         aws_provider, "get_instance_status",
-        lambda iid: aws_provider.InstanceStatus(state="pending", public_ip=None),
+        lambda iid, region_name=None: aws_provider.InstanceStatus(state="pending", public_ip=None),
     )
 
     result = gpu_billing.run_safety_sweep(db_session)
@@ -146,7 +146,7 @@ def test_sweep_flips_provisioning_to_running_once_aws_confirms(db_session, organ
 
     monkeypatch.setattr(
         aws_provider, "get_instance_status",
-        lambda iid: aws_provider.InstanceStatus(state="running", public_ip="1.2.3.4"),
+        lambda iid, region_name=None: aws_provider.InstanceStatus(state="running", public_ip="1.2.3.4"),
     )
 
     gpu_billing.run_safety_sweep(db_session)
