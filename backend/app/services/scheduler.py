@@ -134,6 +134,40 @@ def _startup_p50_seconds(db: Session, region_code: str) -> float:
     return deltas[len(deltas) // 2]
 
 
+def startup_estimates_by_region(db: Session) -> dict[str, float]:
+    """
+    §14 startup estimates for every region in one query — the catalogue
+    endpoint uses this to show "usually ready in ~X min" without 6 queries
+    per SKU. Same p50-of-recent-launches rule as _startup_p50_seconds.
+    """
+    rows = db.execute(
+        select(
+            GpuInstance.region_code,
+            GpuInstance.provisioning_started_at,
+            GpuInstance.started_at,
+        )
+        .where(
+            GpuInstance.region_code.is_not(None),
+            GpuInstance.started_at.is_not(None),
+            GpuInstance.provisioning_started_at.is_not(None),
+        )
+        .order_by(GpuInstance.started_at.desc())
+        .limit(STARTUP_SAMPLE_SIZE * 12)
+    ).all()
+    per_region: dict[str, list[float]] = {}
+    for region_code, begun, started in rows:
+        if _as_aware(started) < _as_aware(begun):
+            continue
+        sample = per_region.setdefault(region_code, [])
+        if len(sample) < STARTUP_SAMPLE_SIZE:
+            sample.append((_as_aware(started) - _as_aware(begun)).total_seconds())
+    return {
+        region: sorted(deltas)[len(deltas) // 2]
+        for region, deltas in per_region.items()
+        if deltas
+    }
+
+
 def list_viable_rows(
     db: Session,
     gpu_type: GpuType,

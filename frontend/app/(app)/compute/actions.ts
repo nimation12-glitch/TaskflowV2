@@ -3,13 +3,16 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createRental, stopRental, startRental, terminateRental, topUpWallet } from "@/lib/compute-client";
+import type { LocationPreference } from "@/lib/compute-types";
 
 export async function createRentalAction(input: {
   gpu_type_slug: string;
   storage_gb: number;
-  ssh_key_id: string;
+  ssh_key_id?: string;
+  workspace_id?: string;
   payment_mode: "pay_as_you_go" | "booking";
   booking_duration?: "day" | "week";
+  location_preference?: LocationPreference;
 }) {
   const result = await createRental(input);
   if ("checkout_url" in result) {

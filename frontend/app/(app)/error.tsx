@@ -14,7 +14,7 @@ export default function DashboardError({ error, reset }: { error: Error & { dige
     <div className="flex min-h-screen items-center justify-center px-6">
       <Card className="w-full max-w-md">
         <CardContent className="pt-6 text-center">
-          <p className="font-medium">We couldn't load your workspace.</p>
+          <p className="font-medium">We couldn&apos;t load your organization.</p>
           <p className="mt-2 text-sm text-muted-foreground">
             This is usually temporary — the backend may have been waking up from idle. Try again, and if it keeps
             happening, signing out and back in will refresh your session.

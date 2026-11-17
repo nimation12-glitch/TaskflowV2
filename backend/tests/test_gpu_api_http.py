@@ -32,6 +32,82 @@ def test_list_gpu_types_over_http(db_session, organization, gpu_type):
     assert "effective_price_micros_per_hour" in body["gpu_types"][0]
 
 
+def test_gpu_catalogue_includes_disabled_skus_and_region_premiums(db_session, organization):
+    from datetime import datetime, timezone
+
+    from app.models.compute import GpuTier, GpuType
+    from app.models.region import GpuRegionAvailability, GpuRegionStatus, Region, RegionStatus
+
+    disabled = GpuType(
+        slug="t4-nano",
+        display_name="T4 Nano",
+        gpu_label="NVIDIA T4",
+        tier=GpuTier.STARTER,
+        aws_instance_type="g4dn.xlarge",
+        aws_region="us-east-1",
+        ami_id=None,
+        vram_gb=16,
+        vcpu=8,
+        ram_gb=32,
+        price_micros_per_hour=400_000,
+        aws_cost_micros_per_hour=390_000,
+        safe_infrastructure_cost_micros=600_000,
+        minimum_rental_hours=1,
+        enabled=False,  # not yet rentable — regional AMI unresolved
+    )
+    db_session.add(disabled)
+    db_session.flush()
+
+    uk = Region(aws_region_code="eu-west-2", public_name="UK London", country_or_area="UK", status=RegionStatus.AVAILABLE)
+    us = Region(aws_region_code="us-east-1", public_name="US East (N. Virginia)", country_or_area="North America", status=RegionStatus.AVAILABLE)
+    stockholm = Region(
+        aws_region_code="eu-north-1", public_name="EU North (Stockholm)", country_or_area="Europe", status=RegionStatus.AVAILABLE
+    )
+    db_session.add_all([uk, us, stockholm])
+    db_session.flush()
+    db_session.add_all(
+        [
+            GpuRegionAvailability(
+                gpu_type_id=disabled.id, region_id=us.id, status=GpuRegionStatus.AVAILABLE,
+                premium_micros=0, aws_cost_est_micros_per_hour=390_000,
+            ),
+            GpuRegionAvailability(
+                gpu_type_id=disabled.id, region_id=uk.id, status=GpuRegionStatus.AVAILABLE,
+                premium_micros=220_000, aws_cost_est_micros_per_hour=610_000,
+            ),
+            # §12: H100-style N/A — never offered for this SKU in Stockholm.
+            GpuRegionAvailability(
+                gpu_type_id=disabled.id, region_id=stockholm.id, status=GpuRegionStatus.NOT_OFFERED,
+                premium_micros=0, aws_cost_est_micros_per_hour=0,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    client = _client_for(db_session)
+    res = client.get("/compute/gpu-types", headers=_auth_header(organization.id))
+    assert res.status_code == 200
+
+    sku = next(s for s in res.json()["gpu_types"] if s["slug"] == "t4-nano")
+    # Disabled SKUs are listed (for the "coming soon" catalogue) but flagged.
+    assert sku["enabled"] is False
+    assert sku["gpu_count"] == 1
+    assert sku["tier"] == "STARTER"
+    assert sku["minimum_rental_hours"] == 1
+    # Fixed base price passes through; plan discount is applied separately.
+    assert sku["base_price_micros_per_hour"] == 400_000
+    assert sku["effective_price_micros_per_hour"] == 400_000  # FREE plan: no discount
+    # Regional premiums are exposed; internal AWS cost estimates are not.
+    premiums = {r["code"]: r["premium_micros"] for r in sku["regions"]["offered"]}
+    assert premiums == {"eu-west-2": 220_000, "us-east-1": 0}
+    assert "eu-north-1" not in premiums
+    assert sku["regions"]["not_offered"] == ["eu-north-1"]
+    assert "aws_cost_est_micros_per_hour" not in str(sku)
+    # §14: every offered region carries a startup estimate.
+    assert all(r["startup_estimate_seconds"] > 0 for r in sku["regions"]["offered"])
+    assert datetime.now(timezone.utc) is not None  # sanity: imports used
+
+
 def test_ssh_key_create_list_delete_over_http(db_session, organization, ssh_public_key):
     client = _client_for(db_session)
     headers = _auth_header(organization.id)

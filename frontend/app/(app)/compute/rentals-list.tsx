@@ -11,12 +11,15 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DialogTrigger } from "@/components/ui/dialog";
 import { useAction } from "@/lib/hooks/use-action";
 import { formatGbp, formatDateTime } from "@/lib/utils";
-import type { Rental, GpuTier, RentalStatus } from "@/lib/compute-types";
+import { REGION_NAMES } from "@/lib/compute-types";
+import type { Rental, GpuSku, RentalStatus } from "@/lib/compute-types";
 import { stopRentalAction, startRentalAction, terminateRentalAction } from "./actions";
 
 const STATUS_META: Record<RentalStatus, { label: string; variant: "warning" | "success" | "default" | "danger" | "outline"; pulse?: boolean }> = {
+  PENDING_PAYMENT: { label: "Awaiting payment", variant: "outline", pulse: true },
   PROVISIONING: { label: "Provisioning", variant: "warning", pulse: true },
   RUNNING: { label: "Running", variant: "success" },
+  STOPPING: { label: "Stopping", variant: "warning", pulse: true },
   STOPPED: { label: "Stopped", variant: "default" },
   TERMINATING: { label: "Terminating", variant: "warning", pulse: true },
   TERMINATED: { label: "Terminated", variant: "outline" },
@@ -60,7 +63,17 @@ function CopySsh({ publicIp }: { publicIp: string }) {
   );
 }
 
-function RentalCard({ rental, tier, now }: { rental: Rental; tier: GpuTier | undefined; now: number }) {
+function RentalCard({
+  rental,
+  sku,
+  workspaceName,
+  now,
+}: {
+  rental: Rental;
+  sku: GpuSku | undefined;
+  workspaceName?: string;
+  now: number;
+}) {
   const { pending, run } = useAction();
   const meta = STATUS_META[rental.status];
 
@@ -74,10 +87,10 @@ function RentalCard({ rental, tier, now }: { rental: Rental; tier: GpuTier | und
             <div className="flex items-center gap-2">
               <Cpu className="h-4 w-4 text-muted-foreground" />
               <p className="text-sm font-medium">
-                {tier?.display_name ?? rental.gpu_type_slug} · {rental.storage_gb}GB
+                {sku?.display_name ?? rental.gpu_type_slug} · {rental.storage_gb}GB
               </p>
             </div>
-            <div className="mt-1.5 flex items-center gap-2">
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
               <Badge variant={meta.variant}>
                 <StatusDot variant={meta.variant} className={meta.pulse ? "animate-pulse" : undefined} />
                 {meta.label}
@@ -86,12 +99,24 @@ function RentalCard({ rental, tier, now }: { rental: Rental; tier: GpuTier | und
               {rental.status === "RUNNING" && rental.started_at && (
                 <span className="font-mono-data text-xs text-muted-foreground">up {elapsedLabel(rental.started_at, now)}</span>
               )}
+              <span className="text-xs text-muted-foreground">
+                {rental.region_code
+                  ? `Region: ${REGION_NAMES[rental.region_code] ?? rental.region_code}`
+                  : "Region: automatically selected"}
+              </span>
+              {rental.payment_mode === "booking" && rental.booking_duration && (
+                <span className="text-xs text-muted-foreground">Booked: 1 {rental.booking_duration}</span>
+              )}
+              {workspaceName && <span className="text-xs text-muted-foreground">Workspace: {workspaceName}</span>}
             </div>
           </div>
 
           <div className="text-right">
             {rental.payment_mode === "pay_as_you_go" && rental.accrued_cost_micros !== null && (
               <p className="font-mono-data text-sm font-medium">{formatGbp(rental.accrued_cost_micros, { precise: true })}</p>
+            )}
+            {rental.hourly_rate_micros !== null && rental.hourly_rate_micros > 0 && (
+              <p className="font-mono-data text-xs text-muted-foreground">{formatGbp(rental.hourly_rate_micros)}/hr</p>
             )}
             {remaining && (
               <p className={`font-mono-data text-sm font-medium ${remaining.warn ? "text-warning" : ""}`}>{remaining.label}</p>
@@ -180,11 +205,21 @@ function RentalCard({ rental, tier, now }: { rental: Rental; tier: GpuTier | und
   );
 }
 
-export function RentalsList({ rentals, gpuTypes }: { rentals: Rental[]; gpuTypes: GpuTier[] }) {
+export function RentalsList({
+  rentals,
+  gpuTypes,
+  workspaceNames,
+}: {
+  rentals: Rental[];
+  gpuTypes: GpuSku[];
+  workspaceNames?: Record<string, string>;
+}) {
   const router = useRouter();
   const [now, setNow] = useState(() => Date.now());
 
-  const isTransitioning = rentals.some((r) => r.status === "PROVISIONING" || r.status === "TERMINATING");
+  const isTransitioning = rentals.some((r) =>
+    ["PENDING_PAYMENT", "PROVISIONING", "STOPPING", "TERMINATING"].includes(r.status)
+  );
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -197,7 +232,7 @@ export function RentalsList({ rentals, gpuTypes }: { rentals: Rental[]; gpuTypes
     return () => clearInterval(poll);
   }, [isTransitioning, router]);
 
-  const tierBySlug = useMemo(() => new Map(gpuTypes.map((t) => [t.slug, t])), [gpuTypes]);
+  const skuBySlug = useMemo(() => new Map(gpuTypes.map((t) => [t.slug, t])), [gpuTypes]);
 
   const active = rentals.filter((r) => r.status !== "TERMINATED" && r.status !== "FAILED");
   const archived = rentals.filter((r) => r.status === "TERMINATED" || r.status === "FAILED");
@@ -207,7 +242,7 @@ export function RentalsList({ rentals, gpuTypes }: { rentals: Rental[]; gpuTypes
       <EmptyState
         icon={Cpu}
         title="No GPU rentals yet"
-        description="Pick a tier and storage size above, then rent a GPU — it'll show up here once provisioning starts."
+        description="Pick a GPU from the catalogue above, then rent it by the hour — it'll show up here once provisioning starts."
       />
     );
   }
@@ -217,7 +252,13 @@ export function RentalsList({ rentals, gpuTypes }: { rentals: Rental[]; gpuTypes
       {active.length > 0 && (
         <div className="space-y-3">
           {active.map((r) => (
-            <RentalCard key={r.id} rental={r} tier={tierBySlug.get(r.gpu_type_slug)} now={now} />
+            <RentalCard
+              key={r.id}
+              rental={r}
+              sku={skuBySlug.get(r.gpu_type_slug)}
+              workspaceName={r.workspace_id ? workspaceNames?.[r.workspace_id] : undefined}
+              now={now}
+            />
           ))}
         </div>
       )}
@@ -226,7 +267,13 @@ export function RentalsList({ rentals, gpuTypes }: { rentals: Rental[]; gpuTypes
           <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Past rentals</h3>
           <div className="space-y-3 opacity-70">
             {archived.map((r) => (
-              <RentalCard key={r.id} rental={r} tier={tierBySlug.get(r.gpu_type_slug)} now={now} />
+              <RentalCard
+                key={r.id}
+                rental={r}
+                sku={skuBySlug.get(r.gpu_type_slug)}
+                workspaceName={r.workspace_id ? workspaceNames?.[r.workspace_id] : undefined}
+                now={now}
+              />
             ))}
           </div>
         </div>

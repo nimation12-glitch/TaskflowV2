@@ -35,6 +35,7 @@ from app.database import SessionLocal
 from app.models.billing import Plan, PlanCode
 from app.models.catalog import AiModel, HostingMode, ModelEntitlement, ModelPricing, ModelStatus, Provider, ProviderKind
 from app.models.compute import GpuTier, GpuType
+from app.models.region import GpuRegionAvailability, GpuRegionStatus, Region, RegionStatus
 from app.models.workspace import StorageSize
 from app.providers.registry import configured_providers
 
@@ -308,6 +309,77 @@ STORAGE_SIZE_DEFAULTS = [
          prepaid_price_micros=624_990_000, available_plans=["MAX"]),
 ]
 
+# Launch regions (spec §12). country_or_area drives the scheduler's location
+# preference filter (§13): Automatic / UK / Europe / North America / Asia.
+REGION_DEFAULTS = [
+    dict(aws_region_code="us-east-1", public_name="US East (N. Virginia)", country_or_area="North America"),
+    dict(aws_region_code="us-west-2", public_name="US West (Oregon)", country_or_area="North America"),
+    dict(aws_region_code="eu-north-1", public_name="EU North (Stockholm)", country_or_area="Europe"),
+    dict(aws_region_code="eu-west-2", public_name="UK London", country_or_area="UK"),
+    dict(aws_region_code="eu-central-1", public_name="EU Central (Frankfurt)", country_or_area="Europe"),
+    dict(aws_region_code="ap-northeast-1", public_name="Asia Pacific Tokyo", country_or_area="Asia"),
+]
+
+# Regional service premiums (spec §12) — 1-GPU family baselines, micro-GBP/hr.
+# US East / US West are the baseline regions (always £0.00) and are therefore
+# absent from the maps. None = the spec's "N/A": that configuration must NOT
+# be offered in that region (§12), seeded as NOT_OFFERED.
+_FAMILY_1GPU_PREMIUMS = {
+    "T4": {"eu-north-1": 80_000, "eu-west-2": 220_000, "eu-central-1": 270_000, "ap-northeast-1": 280_000},
+    "A10G": {"eu-north-1": 120_000, "eu-west-2": 560_000, "eu-central-1": 530_000, "ap-northeast-1": 690_000},
+    "L4": {"eu-north-1": 80_000, "eu-west-2": 340_000, "eu-central-1": 310_000, "ap-northeast-1": 560_000},
+    "L40S": {"eu-north-1": 170_000, "eu-west-2": None, "eu-central-1": 720_000, "ap-northeast-1": 1_290_000},
+    "H100": {"eu-north-1": None, "eu-west-2": 3_170_000, "eu-central-1": None, "ap-northeast-1": 2_640_000},
+}
+
+# Configurations the spec prices per-CONFIGURATION rather than per 1-GPU
+# family (§12: "Multi-GPU configurations should use exact per-configuration
+# regional premiums in the backend rather than blindly multiplying the 1-GPU
+# premium by GPU count").
+_CONFIG_PREMIUMS = {
+    ("A100", 8): {"eu-north-1": 2_690_000, "eu-west-2": 10_140_000, "eu-central-1": 8_400_000, "ap-northeast-1": 12_510_000},
+    ("H100", 8): {"eu-north-1": 5_900_000, "eu-west-2": 25_360_000, "eu-central-1": None, "ap-northeast-1": 21_030_000},
+}
+
+# 1-GPU baseline AWS planning cost per family — the aws_cost_micros_per_hour
+# of the family's cheapest 1-GPU SKU. The denominator used to scale unlisted
+# multi-GPU configurations (see _region_premium_micros below).
+_FAMILY_1GPU_BASE_COST = {"T4": 390_000, "A10G": 750_000, "L4": 600_000, "L40S": 1_380_000, "H100": 5_100_000}
+
+
+def _region_premium_micros(family: str, gpu_count: int, region_code: str, sku_aws_cost_micros: int):
+    """
+    The customer-facing regional premium for one (SKU x region) configuration,
+    in micro-GBP/hour — or None when the spec marks it N/A (NOT_OFFERED).
+
+    - Configurations listed per-configuration in §12 (A100 8GPU, H100 8GPU)
+      use the spec's exact numbers.
+    - 1-GPU SKUs use their family's baseline premium directly.
+    - Unlisted multi-GPU configurations scale the family's 1-GPU premium by
+      how much infrastructure the configuration actually consumes relative to
+      the family's 1-GPU baseline (sku AWS cost / baseline cost), rounded to
+      the nearest £0.01. This honours §12's "exact per-configuration
+      premiums, not blind multiplication by GPU count" while giving every
+      launch catalogue row a defensible, documented price.
+    """
+    if region_code in ("us-east-1", "us-west-2"):
+        # Baseline regions (§12): every configuration is offered at £0.00
+        # premium, whatever its size.
+        return 0
+    config_premiums = _CONFIG_PREMIUMS.get((family, gpu_count))
+    if config_premiums is not None:
+        return config_premiums.get(region_code, 0)
+    if gpu_count == 1:
+        return _FAMILY_1GPU_PREMIUMS.get(family, {}).get(region_code, 0)
+    one_gpu_premium = _FAMILY_1GPU_PREMIUMS.get(family, {}).get(region_code)
+    if one_gpu_premium is None:
+        return None  # N/A family-region -> not offered for any configuration
+    baseline = _FAMILY_1GPU_BASE_COST.get(family)
+    if baseline is None or baseline <= 0:
+        return one_gpu_premium
+    scale = sku_aws_cost_micros / baseline
+    return round(one_gpu_premium * scale / 10_000) * 10_000
+
 PROVIDER_DEFAULTS = [
     (ProviderKind.NVIDIA, "NVIDIA"),
     (ProviderKind.MOONSHOT, "Moonshot"),
@@ -412,6 +484,80 @@ def run():
                     row.enabled = False
         db.commit()
 
+        # --- Launch regions + the (SKU x region) premium matrix (§12, §19) ---
+        region_rows: dict[str, Region] = {}
+        for defaults in REGION_DEFAULTS:
+            existing = db.execute(
+                select(Region).where(Region.aws_region_code == defaults["aws_region_code"])
+            ).scalar_one_or_none()
+            if existing:
+                for k, v in defaults.items():
+                    setattr(existing, k, v)
+                region_rows[existing.aws_region_code] = existing
+            else:
+                region = Region(status=RegionStatus.AVAILABLE, **defaults)
+                db.add(region)
+                db.flush()
+                region_rows[region.aws_region_code] = region
+        db.commit()
+
+        sku_rows = list(db.execute(select(GpuType)).scalars())
+        available_rows = 0
+        not_offered_rows = 0
+        for sku in sku_rows:
+            family = sku.gpu_label.replace("NVIDIA ", "")
+            for code in (r["aws_region_code"] for r in REGION_DEFAULTS):
+                region = region_rows[code]
+                premium = _region_premium_micros(family, sku.gpu_count, code, sku.aws_cost_micros_per_hour)
+                row = db.execute(
+                    select(GpuRegionAvailability).where(
+                        GpuRegionAvailability.gpu_type_id == sku.id,
+                        GpuRegionAvailability.region_id == region.id,
+                    )
+                ).scalar_one_or_none()
+                if premium is None:
+                    # §12: an N/A region must never be offered for this
+                    # configuration. A previously-cached AMI on a flipped row
+                    # is harmless (the scheduler only reads AVAILABLE rows)
+                    # and is deliberately left in place for auditability.
+                    if row is None:
+                        db.add(
+                            GpuRegionAvailability(
+                                gpu_type_id=sku.id,
+                                region_id=region.id,
+                                status=GpuRegionStatus.NOT_OFFERED,
+                                premium_micros=0,
+                                aws_cost_est_micros_per_hour=0,
+                            )
+                        )
+                    else:
+                        row.status = GpuRegionStatus.NOT_OFFERED
+                        row.premium_micros = 0
+                        row.aws_cost_est_micros_per_hour = 0
+                    not_offered_rows += 1
+                    continue
+                if row is None:
+                    db.add(
+                        GpuRegionAvailability(
+                            gpu_type_id=sku.id,
+                            region_id=region.id,
+                            status=GpuRegionStatus.AVAILABLE,
+                            premium_micros=premium,
+                            # Launch-time regional planning cost (§19 input):
+                            # baseline SKU cost + premium. The premium is
+                            # exactly what covers regional economics until
+                            # live regional telemetry exists (the AWS pricing
+                            # API needs pricing:GetProducts, not yet granted).
+                            aws_cost_est_micros_per_hour=sku.aws_cost_micros_per_hour + premium,
+                        )
+                    )
+                else:
+                    row.status = GpuRegionStatus.AVAILABLE
+                    row.premium_micros = premium
+                    row.aws_cost_est_micros_per_hour = sku.aws_cost_micros_per_hour + premium
+                available_rows += 1
+        db.commit()
+
         configured = set(configured_providers())
         provider_rows: dict[ProviderKind, Provider] = {}
         for kind, display_name in PROVIDER_DEFAULTS:
@@ -479,6 +625,7 @@ def run():
         print("Seed complete.")
         print(f"Plans in DB now: {plans_now}")
         print(f"GPU catalogue: {total} SKUs seeded ({inserted} new, {total - inserted} updated in place), all enabled=False until a regional AMI is resolved.")
+        print(f"Regions: {len(region_rows)} launch regions seeded; regional matrix: {available_rows} offered + {not_offered_rows} N/A configurations.")
         print(f"Storage catalogue: {len(STORAGE_SIZE_DEFAULTS)} sizes seeded, all enabled=False until storage provisioning lands.")
         print(f"Configured providers: {sorted(configured) or '(none - set provider API keys in .env)'}")
     finally:

@@ -1,12 +1,12 @@
 import "server-only";
 import { backendJson } from "@/lib/backend-client";
-import type { GpuTier, WalletSummary, Rental } from "@/lib/compute-types";
+import type { GpuSku, LocationPreference, WalletSummary, Rental } from "@/lib/compute-types";
 
 // NOTE: this file assumes the /compute/* backend contract from the spec.
 // Every call is isolated here so response-shape changes only need edits in this file.
 
 export async function getGpuTypes() {
-  const res = await backendJson<{ gpu_types: GpuTier[] }>("/compute/gpu-types");
+  const res = await backendJson<{ gpu_types: GpuSku[] }>("/compute/gpu-types");
   return res.gpu_types;
 }
 
@@ -29,9 +29,11 @@ export async function getRentals() {
 export function createRental(input: {
   gpu_type_slug: string;
   storage_gb: number;
-  ssh_key_id: string;
+  ssh_key_id?: string;
+  workspace_id?: string;
   payment_mode: "pay_as_you_go" | "booking";
   booking_duration?: "day" | "week";
+  location_preference?: LocationPreference;
 }) {
   return backendJson<Rental | { checkout_url: string }>("/compute/rentals", {
     method: "POST",

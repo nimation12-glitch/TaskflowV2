@@ -11,10 +11,10 @@ import { PLAN_LIMITS, type PlanCode } from "@/lib/compute-types";
 import { checkoutSubscriptionAction, openBillingPortalAction } from "./actions";
 
 const TIERS: { code: PlanCode; name: string; price: string; tagline: string; accent?: "primary" | "accent" }[] = [
-  { code: "FREE", name: "Free", price: "£0/mo", tagline: "Starter GPUs, pay as you go." },
-  { code: "PRO", name: "Pro", price: "£35/mo", tagline: "Standard GPUs for regular projects.", accent: "primary" },
-  { code: "ULTRA", name: "Ultra", price: "£65/mo", tagline: "Pro-tier GPUs and more workspaces." },
-  { code: "MAX", name: "Max", price: "£100/mo", tagline: "Everything, including Ultra-tier GPUs.", accent: "accent" },
+  { code: "FREE", name: "Free", price: "£0/mo", tagline: "1 concurrent rental, 50GB storage, pay as you go." },
+  { code: "PRO", name: "Pro", price: "£35/mo", tagline: "3 concurrent rentals, 250GB storage, and booking.", accent: "primary" },
+  { code: "ULTRA", name: "Ultra", price: "£65/mo", tagline: "6 concurrent rentals, 500GB storage, 14-day bookings." },
+  { code: "MAX", name: "Max", price: "£100/mo", tagline: "10 concurrent rentals, 1TB storage, everything unlocked.", accent: "accent" },
 ];
 
 function tierFeatures(code: PlanCode): string[] {

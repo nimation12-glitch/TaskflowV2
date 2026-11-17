@@ -69,7 +69,7 @@ export default function SignupPage() {
           </Link>
           <h1 className="mt-5 text-xl font-semibold">Create your TaskFlow account</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            You'll get a free workspace with pay-as-you-go GPU rental to start.
+            You'll get an organization with pay-as-you-go GPU rental and a free 50GB workspace to start.
           </p>
 
           {error && <p className="mt-4 rounded-md bg-danger/10 border border-danger/30 px-3 py-2 text-sm text-danger">{error}</p>}
