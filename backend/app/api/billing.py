@@ -4,11 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
-from app.auth.internal import RequestContext, require_role
+from app.auth.internal import RequestContext, require_context
 from app.billing import stripe_service
 from app.database import get_db
 from app.models.billing import PlanCode
-from app.models.org import Role
 from app.services import statement as statement_service
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -27,7 +26,7 @@ class CheckoutCreditsRequest(BaseModel):
 @router.post("/checkout/subscription")
 def checkout_subscription(
     body: CheckoutSubscriptionRequest,
-    ctx: RequestContext = Depends(require_role(Role.OWNER)),
+    ctx: RequestContext = Depends(require_context),
     db: Session = Depends(get_db),
 ):
     from app.models.org import Organization
@@ -49,7 +48,7 @@ def checkout_subscription(
 @router.post("/checkout/credits")
 def checkout_credits(
     body: CheckoutCreditsRequest,
-    ctx: RequestContext = Depends(require_role(Role.OWNER)),
+    ctx: RequestContext = Depends(require_context),
     db: Session = Depends(get_db),
 ):
     from app.models.org import Organization
@@ -70,7 +69,7 @@ def checkout_credits(
 
 @router.post("/portal")
 def billing_portal(
-    ctx: RequestContext = Depends(require_role(Role.OWNER)),
+    ctx: RequestContext = Depends(require_context),
     db: Session = Depends(get_db),
 ):
     from app.models.org import Organization
@@ -91,13 +90,13 @@ def billing_portal(
 #
 # Read-only JSON documents assembled from the append-only billing ledger.
 # Generation appends a new immutable snapshot; there is deliberately no
-# update or delete endpoint anywhere. OWNER-only: statements contain the
-# full financial ledger of the organization.
+# update or delete endpoint anywhere. Any organization member can read
+# their own organization's ledger — it is their own workspace's money.
 
 
 @router.get("/statement")
 def get_statement(
-    ctx: RequestContext = Depends(require_role(Role.OWNER)),
+    ctx: RequestContext = Depends(require_context),
     db: Session = Depends(get_db),
 ):
     """Generate a fresh statement and store it as a new immutable snapshot."""
@@ -113,7 +112,7 @@ def get_statement(
 
 @router.get("/statement/history")
 def statement_history(
-    ctx: RequestContext = Depends(require_role(Role.OWNER)),
+    ctx: RequestContext = Depends(require_context),
     db: Session = Depends(get_db),
 ):
     """Snapshot history (metadata only), newest first."""
@@ -123,7 +122,7 @@ def statement_history(
 @router.get("/statement/{statement_id}")
 def statement_snapshot(
     statement_id: str,
-    ctx: RequestContext = Depends(require_role(Role.OWNER)),
+    ctx: RequestContext = Depends(require_context),
     db: Session = Depends(get_db),
 ):
     """Fetch one stored snapshot after verifying its integrity hash."""

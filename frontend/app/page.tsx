@@ -57,10 +57,6 @@ const FAQ = [
     a: "You'll see a warning starting an hour before expiry. When the period ends, the instance auto-terminates. Extending a booking is coming soon.",
   },
   {
-    q: "Is the AI Model Gateway still available?",
-    a: "It's paused, not gone. We're focused on GPU rental first since it doesn't require pre-funding third-party model costs. Pay-per-token model access is coming back.",
-  },
-  {
     q: "How is storage priced?",
     a: "The first 100GB is included in the base hourly rate. Extra storage adds £0.03/hour for every 100GB block beyond that, shown live as you configure a rental.",
   },

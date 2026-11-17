@@ -11,9 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useAction } from "@/lib/hooks/use-action";
 import { formatDate } from "@/lib/utils";
-import { inviteMemberAction, removeMemberAction } from "./actions";
+import { inviteMemberAction, removeMemberAction, updateMemberRoleAction } from "./actions";
 
-type Member = { user_id: string; role: string; joined_at: string };
+type Member = { user_id: string; role: string; joined_at: string; email: string | null; name: string | null };
 type Invitation = { id: string; invited_email: string; role: string; expires_at: string };
 
 const ROLE_VARIANT: Record<string, "accent" | "default" | "outline"> = {
@@ -99,20 +99,30 @@ export function TeamClient({
   members,
   invitations,
   canManage,
+  viewerRole,
   seatCount,
   maxSeats,
 }: {
   members: Member[];
   invitations: Invitation[];
   canManage: boolean;
+  viewerRole: string;
   seatCount: number;
   maxSeats: number;
 }) {
   const { pending, run } = useAction();
   const atLimit = seatCount >= maxSeats;
+  const isOwnerViewer = viewerRole === "OWNER";
 
   function handleRemove(userId: string) {
     run(() => removeMemberAction(userId), { success: "Member removed", error: "Couldn't remove member" });
+  }
+
+  function handleRoleChange(userId: string, role: "ADMIN" | "MEMBER") {
+    run(() => updateMemberRoleAction(userId, role), {
+      success: role === "ADMIN" ? "Admin role granted" : "Role set to member",
+      error: "Couldn't change the role",
+    });
   }
 
   return (
@@ -133,14 +143,37 @@ export function TeamClient({
         {members.map((m) => (
           <div key={m.user_id} className="flex items-center justify-between p-4">
             <div className="flex items-center gap-3">
-              <Avatar label={m.user_id} />
+              <Avatar label={m.email ?? m.user_id} />
               <div>
-                <p className="font-mono-data text-sm">{m.user_id.slice(0, 13)}…</p>
-                <p className="text-xs text-muted-foreground">Joined {formatDate(m.joined_at)}</p>
+                <p className="text-sm">{m.name ?? m.email ?? `${m.user_id.slice(0, 13)}…`}</p>
+                <p className="text-xs text-muted-foreground">
+                  {m.email ? m.email : `Joined ${formatDate(m.joined_at)}`}
+                  {m.email && ` · Joined ${formatDate(m.joined_at)}`}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Badge variant={ROLE_VARIANT[m.role] ?? "outline"}>{m.role}</Badge>
+              {isOwnerViewer && m.role !== "OWNER" ? (
+                <div className="flex gap-1.5">
+                  {(["MEMBER", "ADMIN"] as const).map((r) => (
+                    <button
+                      type="button"
+                      key={r}
+                      disabled={pending || m.role === r}
+                      onClick={() => handleRoleChange(m.user_id, r)}
+                      className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-100 ${
+                        m.role === r
+                          ? "border-primary bg-primary/10 text-foreground"
+                          : "border-border text-muted-foreground hover:text-foreground disabled:hover:text-muted-foreground"
+                      }`}
+                    >
+                      {r === "MEMBER" ? "Member" : "Admin"}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <Badge variant={ROLE_VARIANT[m.role] ?? "outline"}>{m.role}</Badge>
+              )}
               {canManage && m.role !== "OWNER" && (
                 <ConfirmDialog
                   trigger={

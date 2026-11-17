@@ -24,3 +24,18 @@ export async function removeMemberAction(userId: string) {
   await backendJson(`/team/members/${userId}`, { method: "DELETE" });
   revalidatePath("/team");
 }
+
+/**
+ * Owner-only on the backend (PATCH /team/members/{id}/role). Grants ADMIN
+ * or demotes to MEMBER within the workspace. The backend also refuses to
+ * change the owner's own role — that's not a UI concern, it's enforced
+ * there.
+ */
+export async function updateMemberRoleAction(userId: string, role: "ADMIN" | "MEMBER") {
+  const result = await backendJson<{ user_id: string; role: string }>(`/team/members/${userId}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+  revalidatePath("/team");
+  return result;
+}

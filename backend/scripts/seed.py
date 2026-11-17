@@ -628,6 +628,19 @@ def run():
         print(f"Regions: {len(region_rows)} launch regions seeded; regional matrix: {available_rows} offered + {not_offered_rows} N/A configurations.")
         print(f"Storage catalogue: {len(STORAGE_SIZE_DEFAULTS)} sizes seeded, all enabled=False until storage provisioning lands.")
         print(f"Configured providers: {sorted(configured) or '(none - set provider API keys in .env)'}")
+
+        # Best-effort copy sync: keep live Stripe product descriptions
+        # matching the checkout copy defined in code, so every checkout page
+        # describes what the buyer is purchasing. No-op when Stripe isn't
+        # configured (local dev); never fails the build over marketing copy.
+        try:
+            from scripts.sync_stripe_product_descriptions import sync_product_descriptions
+
+            updated = sync_product_descriptions(strict=False)
+            if updated:
+                print(f"Stripe product descriptions: {updated} updated.")
+        except Exception:  # noqa: BLE001 — never break seeding over checkout copy
+            print("Stripe product description sync skipped (Stripe not configured here).")
     finally:
         db.close()
 

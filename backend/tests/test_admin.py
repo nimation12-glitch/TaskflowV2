@@ -101,3 +101,33 @@ def test_admin_routes_404_for_unknown_organization(db_session, organization):
     fake_id = str(uuid.uuid4())
     assert client.get(f"/admin/organizations/{fake_id}", headers=admin_headers).status_code == 404
     assert client.post(f"/admin/organizations/{fake_id}/credits", json={"amount_micros": 1, "reason": "x"}, headers=admin_headers).status_code == 404
+
+
+def test_admin_users_directory_groups_memberships_by_user(db_session, organization):
+    from app.models.org import Membership, Role
+
+    client = _client_for(db_session)
+    admin_headers = _auth_header(organization.id, is_platform_admin=True)
+
+    user_a = uuid.uuid4()
+    user_b = uuid.uuid4()
+    db_session.add_all(
+        [
+            Membership(organization_id=organization.id, user_id=user_a, role=Role.OWNER),
+            Membership(organization_id=organization.id, user_id=user_b, role=Role.MEMBER),
+        ]
+    )
+    db_session.commit()
+
+    res = client.get("/admin/users", headers=admin_headers)
+    assert res.status_code == 200
+    users = {u["user_id"]: u for u in res.json()["users"]}
+    assert users[str(user_a)]["organizations"][0]["role"] == "OWNER"
+    assert users[str(user_a)]["organizations"][0]["name"] == "Test Org"
+    assert users[str(user_b)]["organizations"][0]["role"] == "MEMBER"
+
+
+def test_admin_users_directory_requires_platform_admin(db_session, organization):
+    client = _client_for(db_session)
+    headers = _auth_header(organization.id, is_platform_admin=False)
+    assert client.get("/admin/users", headers=headers).status_code == 403

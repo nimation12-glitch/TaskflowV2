@@ -25,6 +25,7 @@ from app.models.billing import (
 )
 from app.models.compute import BookingDuration, GpuInstance, GpuInstanceStatus, SshKey
 from app.models.org import Organization
+from app.models.region import Region
 from app.services import credits as credits_service
 
 settings = get_settings()
@@ -59,6 +60,25 @@ SUBSCRIPTION_PRICE_ATTRS = {
     PlanCode.MAX: "stripe_price_max",
 }
 
+# What the buyer is actually purchasing, shown on the Stripe checkout page
+# (custom_text.submit renders beside the pay button; subscription_data
+# .description travels onto the subscription and its invoices). Plans buy
+# ACCESS (spec §3) — GPU time itself is always paid from the wallet.
+PLAN_CHECKOUT_TEXT = {
+    PlanCode.PRO: {
+        "submit": "You're subscribing to TaskFlow Pro: 3 concurrent GPU rentals, 250 GB storage, 7-day bookings. GPU time is paid from your wallet.",
+        "description": "TaskFlow Pro plan — 3 concurrent GPU rentals, 250 GB storage, 7-day bookings. Billed monthly; GPU time is paid from your wallet.",
+    },
+    PlanCode.ULTRA: {
+        "submit": "You're subscribing to TaskFlow Ultra: 6 concurrent GPU rentals, 500 GB storage, 14-day bookings. GPU time is paid from your wallet.",
+        "description": "TaskFlow Ultra plan — 6 concurrent GPU rentals, 500 GB storage, 14-day bookings. Billed monthly; GPU time is paid from your wallet.",
+    },
+    PlanCode.MAX: {
+        "submit": "You're subscribing to TaskFlow Max: 10 concurrent GPU rentals, 1 TB storage, 14-day bookings. GPU time is paid from your wallet.",
+        "description": "TaskFlow Max plan — 10 concurrent GPU rentals, 1 TB storage, 14-day bookings. Billed monthly; GPU time is paid from your wallet.",
+    },
+}
+
 
 def get_or_create_stripe_customer(db: Session, org: Organization, email: str) -> str:
     client = _client()
@@ -90,6 +110,7 @@ def create_subscription_checkout_session(
         raise BillingNotConfiguredError(f"No Stripe price configured for plan {plan_code}")
 
     customer_id = get_or_create_stripe_customer(db, org, email)
+    checkout_text = PLAN_CHECKOUT_TEXT[plan_code]
 
     session = client.checkout.Session.create(
         mode="subscription",
@@ -97,8 +118,12 @@ def create_subscription_checkout_session(
         line_items=[{"price": price_id, "quantity": 1}],
         success_url=f"{settings.app_base_url}/dashboard/billing?checkout=success",
         cancel_url=f"{settings.app_base_url}/dashboard/billing?checkout=cancelled",
+        custom_text={"submit": {"message": checkout_text["submit"]}},
         metadata={"organization_id": str(org.id), "plan": plan_code.value, "purchase_type": "subscription"},
-        subscription_data={"metadata": {"organization_id": str(org.id), "plan": plan_code.value}},
+        subscription_data={
+            "description": checkout_text["description"],
+            "metadata": {"organization_id": str(org.id), "plan": plan_code.value},
+        },
     )
     return session["url"]
 
@@ -122,6 +147,10 @@ def create_credit_purchase_checkout_session(
         line_items=[{"price": price_id, "quantity": 1}],
         success_url=f"{settings.app_base_url}/dashboard/billing?checkout=success",
         cancel_url=f"{settings.app_base_url}/dashboard/billing?checkout=cancelled",
+        custom_text={
+            "submit": {"message": f"Adds £{amount_micros / 1_000_000:g} of credit to your workspace — spend it on GPU compute rentals."}
+        },
+        payment_intent_data={"description": f"TaskFlow credit purchase — £{amount_micros / 1_000_000:g} added to wallet"},
         metadata={
             "organization_id": str(org.id),
             "purchase_type": "credit_purchase",
@@ -179,6 +208,10 @@ def create_wallet_topup_checkout_session(db: Session, org: Organization, amount_
         line_items=[{"price": price_id, "quantity": 1}],
         success_url=f"{settings.app_base_url}/dashboard/compute?checkout=success",
         cancel_url=f"{settings.app_base_url}/dashboard/compute?checkout=cancelled",
+        custom_text={
+            "submit": {"message": f"Adds £{amount_micros / 1_000_000:g} of wallet credit — pays for GPU compute rentals and never expires."}
+        },
+        payment_intent_data={"description": f"TaskFlow wallet top-up — £{amount_micros / 1_000_000:g} added to wallet"},
         metadata={
             "organization_id": str(org.id),
             "purchase_type": "wallet_topup",
@@ -213,13 +246,31 @@ def create_gpu_booking_checkout_session(
 
     duration_label = "24 hours" if instance.booking_duration == BookingDuration.DAY else "7 days"
 
+    # Resolve the region's public name for the checkout copy — the buyer
+    # should see where their GPU will live, not an AWS region code.
+    region_label = instance.region_code
+    if instance.region_code:
+        region_row = db.execute(
+            select(Region).where(Region.aws_region_code == instance.region_code)
+        ).scalar_one_or_none()
+        if region_row is not None:
+            region_label = region_row.public_name
+
+    booking_description = (
+        f"{gpu_type.display_name} rental in {region_label}, {instance.storage_gb} GB storage. "
+        f"Fixed {duration_label} booking — charged upfront, auto-terminates when the period ends."
+    )
+
     session_kwargs: dict = dict(
         mode="payment",
         line_items=[
             {
                 "price_data": {
                     "currency": "gbp",
-                    "product_data": {"name": f"{gpu_type.display_name} GPU booking — {duration_label}"},
+                    "product_data": {
+                        "name": f"{gpu_type.display_name} GPU booking — {duration_label}",
+                        "description": booking_description,
+                    },
                     "unit_amount": amount_pence,
                 },
                 "quantity": 1,
@@ -227,6 +278,9 @@ def create_gpu_booking_checkout_session(
         ],
         success_url=f"{settings.app_base_url}/dashboard/compute?checkout=success",
         cancel_url=f"{settings.app_base_url}/dashboard/compute?checkout=cancelled",
+        custom_text={
+            "submit": {"message": "You're booking a fixed rental period — the total is charged now and the instance auto-terminates when it ends."}
+        },
         metadata={
             "organization_id": str(org.id),
             "purchase_type": "gpu_booking",

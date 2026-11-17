@@ -4,16 +4,22 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.internal import RequestContext, require_platform_admin
 from app.database import get_db
 from app.models.billing import PlanCode
+from app.models.org import Membership, Organization
 from app.services import admin as admin_service
 
 router = APIRouter(
     prefix="/admin/organizations", tags=["admin"], dependencies=[Depends(require_platform_admin)]
 )
+
+# Separate router because the shared prefix already has a /{organization_id}
+# catch-all — /admin/users would be swallowed by it if it lived on `router`.
+users_router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_platform_admin)])
 
 
 class GrantCreditsRequest(BaseModel):
@@ -80,3 +86,36 @@ def change_plan(organization_id: str, body: ChangePlanRequest, db: Session = Dep
         raise HTTPException(400, "Unknown plan_code")
 
     return admin_service.get_organization_detail(db, org_id)
+
+
+@users_router.get("/users")
+def list_users(db: Session = Depends(get_db)):
+    """
+    Directory for the admin panel's Users tab: every identity-DB user id that
+    holds a membership, with the organizations they belong to and their role
+    in each. Identity data itself (emails, names, ban state, site roles)
+    lives in the Next.js/Prisma identity DB and is joined there — this
+    backend has no users table of its own.
+    """
+    rows = db.execute(
+        select(
+            Membership.user_id,
+            Membership.role,
+            Organization.id.label("organization_id"),
+            Organization.name.label("organization_name"),
+        )
+        .join(Organization, Membership.organization_id == Organization.id)
+        .order_by(Organization.created_at, Membership.created_at)
+    ).all()
+
+    grouped: dict[str, dict] = {}
+    for user_id, role, organization_id, organization_name in rows:
+        entry = grouped.setdefault(str(user_id), {"user_id": str(user_id), "organizations": []})
+        entry["organizations"].append(
+            {
+                "id": str(organization_id),
+                "name": organization_name,
+                "role": role.value,
+            }
+        )
+    return {"users": list(grouped.values())}

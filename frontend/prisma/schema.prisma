@@ -29,13 +29,31 @@ model User {
   // Users who only use OAuth have no row here at all.
   passwordHash  String?
 
-  // Platform-admin flag. Claim-only: there is no API or UI that lets a user
-  // set this on themselves or anyone else. It's set directly in the database
-  // at issuance time (see scripts/set-platform-admin.ts) and is read
-  // server-side (lib/platform-admin.ts) to decide the is_platform_admin
-  // claim on the backend JWT and to gate the /dashboard/admin/* UI. Never
-  // exposed to or trusted from the client.
+  // Platform-admin flag. Legacy: superseded by siteRole below, still
+  // honoured as a fallback so accounts granted admin before siteRole
+  // existed keep their access. Claim-only: there is no API or UI that lets
+  // a user set this on themselves or anyone else. It's set directly in the
+  // database at issuance time (see scripts/set-platform-admin.ts) and is
+  // read server-side (lib/platform-admin.ts) to decide the
+  // is_platform_admin claim on the backend JWT and to gate the /admin/* UI.
+  // Never exposed to or trusted from the client.
   isPlatformAdmin Boolean @default(false)
+
+  // Site-level role: OWNER is the single platform owner (there must always
+  // be exactly one), ADMIN is granted by the owner from the admin panel,
+  // and everyone else is USER. OWNER + ADMIN get the admin panel (users,
+  // organizations, maintenance) and ban/unban powers; only OWNER can
+  // grant or revoke ADMIN. Distinct from organization membership roles —
+  // those are per-workspace (backend DB), this is a platform-wide role
+  // (identity DB).
+  siteRole String @default("USER")
+
+  // Ban state. A non-null bannedAt means the account is banned: sign-in is
+  // refused (credentials and OAuth alike) and any existing session is
+  // bounced out of the app at the layout. Set by the owner/admins from the
+  // admin panel; unbanning clears both fields.
+  bannedAt     DateTime?
+  bannedReason String?
 
   // "light" | "dark" | "system". Deliberately stored here rather than in
   // localStorage/a cookie — the app has a hard no-browser-storage-for-

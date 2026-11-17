@@ -50,3 +50,13 @@ export function changeOrganizationPlan(id: string, planCode: PlanCode) {
     body: JSON.stringify({ plan_code: planCode }),
   });
 }
+
+export type AdminOrgMembershipLite = { id: string; name: string; role: "OWNER" | "ADMIN" | "MEMBER" };
+
+/** One backend membership-grouped row per identity user. */
+export type AdminUserMembershipRow = { user_id: string; organizations: AdminOrgMembershipLite[] };
+
+/** Workspace(s) + membership role for every identity user, for the Users tab join. */
+export function getAdminUsers() {
+  return backendJson<{ users: AdminUserMembershipRow[] }>("/admin/users");
+}

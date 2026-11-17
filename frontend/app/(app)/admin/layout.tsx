@@ -14,7 +14,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <div>
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">Platform-admin tools. Visible only to you.</p>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          Platform tools — visible to the owner and admins only.
+        </p>
       </div>
 
       <div className="mt-6">

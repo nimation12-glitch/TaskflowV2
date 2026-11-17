@@ -82,6 +82,44 @@ def remove_member(
     return {"removed": True}
 
 
+class UpdateMemberRoleRequest(BaseModel):
+    # OWNER is deliberately not grantable: an organization has exactly one
+    # owner, and ownership transfer is not a product flow yet.
+    role: Role
+
+
+@router.patch("/members/{user_id}/role")
+def update_member_role(
+    user_id: uuid.UUID,
+    body: UpdateMemberRoleRequest,
+    ctx: RequestContext = Depends(require_role(Role.OWNER)),
+    db: Session = Depends(get_db),
+):
+    """
+    OWNER-only. Grants ADMIN or demotes to MEMBER. The owner can never
+    change their own role — that would leave the organization without an
+    owner — and ADMIN/MEMBER callers are rejected by require_role.
+    """
+    if body.role == Role.OWNER:
+        raise HTTPException(400, "Ownership cannot be granted or transferred")
+    if user_id == ctx.user_id:
+        raise HTTPException(400, "You cannot change your own role")
+
+    row = db.execute(
+        select(Membership).where(
+            Membership.organization_id == ctx.organization_id, Membership.user_id == user_id
+        )
+    ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Member not found")
+    if row.role == Role.OWNER:
+        raise HTTPException(400, "Cannot change the organization owner's role")
+
+    row.role = body.role
+    db.commit()
+    return {"user_id": str(user_id), "role": row.role.value}
+
+
 class AcceptInvitationRequest(BaseModel):
     token: str
     user_id: uuid.UUID

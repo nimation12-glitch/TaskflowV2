@@ -1,4 +1,5 @@
 import { backendJson } from "@/lib/backend-client";
+import { prisma } from "@/lib/prisma";
 import { TeamClient } from "./team-client";
 import { UnavailableNotice } from "@/components/ui/unavailable-notice";
 import { safe } from "@/lib/safe-fetch";
@@ -21,6 +22,27 @@ export default async function TeamPage() {
   const org = orgResult.data;
   const anyUnavailable = !membersResult.ok || !invitationsResult.ok || !orgResult.ok;
 
+  // Membership rows only carry user ids — resolve names/emails from the
+  // identity DB so the list is readable.
+  let identityMap = new Map<string, { email: string | null; name: string | null }>();
+  if (members.length > 0) {
+    try {
+      const users = await prisma.user.findMany({
+        where: { id: { in: members.map((m) => m.user_id) } },
+        select: { id: true, email: true, name: true },
+      });
+      identityMap = new Map(users.map((u) => [u.id, { email: u.email, name: u.name }]));
+    } catch {
+      // Identity lookup is cosmetic here — fall back to id-based labels.
+    }
+  }
+
+  const enrichedMembers = members.map((m) => ({
+    ...m,
+    email: identityMap.get(m.user_id)?.email ?? null,
+    name: identityMap.get(m.user_id)?.name ?? null,
+  }));
+
   const seatCount = members.length + invitations.length;
   const maxSeats = org.plan?.max_members ?? 3;
   const canManage = org.role === "OWNER" || org.role === "ADMIN";
@@ -36,7 +58,14 @@ export default async function TeamPage() {
           <UnavailableNotice label="Some team data" />
         </div>
       )}
-      <TeamClient members={members} invitations={invitations} canManage={canManage} seatCount={seatCount} maxSeats={maxSeats} />
+      <TeamClient
+        members={enrichedMembers}
+        invitations={invitations}
+        canManage={canManage}
+        viewerRole={org.role}
+        seatCount={seatCount}
+        maxSeats={maxSeats}
+      />
     </div>
   );
 }

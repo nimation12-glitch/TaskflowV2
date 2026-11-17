@@ -5,12 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.internal import RequestContext, require_context, require_role
+from app.auth.internal import RequestContext, require_context
 from app.auth.maintenance import block_if_maintenance_unless_admin
 from app.billing import stripe_service
 from app.database import get_db
 from app.models.compute import GpuInstance, GpuInstanceStatus, PaymentMode
-from app.models.org import Organization, Role
+from app.models.org import Organization
 from app.services import credits as credits_service
 from app.services import gpu_billing
 
@@ -57,7 +57,7 @@ def get_wallet(
 @router.post("/wallet/topup")
 def topup_wallet(
     body: WalletTopupRequest,
-    ctx: RequestContext = Depends(require_role(Role.OWNER)),
+    ctx: RequestContext = Depends(require_context),
     db: Session = Depends(get_db),
 ):
     org = db.get(Organization, ctx.organization_id)

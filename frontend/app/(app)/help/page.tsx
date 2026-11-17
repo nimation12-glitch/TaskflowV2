@@ -6,7 +6,7 @@ import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/
 const TOPICS = [
   { icon: Cpu, title: "Renting a GPU", href: "/compute", body: "Pick a tier, storage, and payment mode from the Compute page." },
   { icon: CreditCard, title: "Billing & plans", href: "/billing", body: "Compare plans, see your rates, and manage your subscription." },
-  { icon: KeyRound, title: "API keys", href: "/api-keys", body: "Create, pause, or revoke keys for the AI Model Gateway." },
+  { icon: KeyRound, title: "API keys", href: "/api-keys", body: "Create, pause, or revoke API keys for programmatic access." },
 ];
 
 const FAQ = [
@@ -21,10 +21,6 @@ const FAQ = [
   {
     q: "Can I change my plan without losing my rentals?",
     a: "Yes — upgrading or downgrading from the Billing page doesn't affect running rentals. If a downgrade puts you over your new concurrent-rental limit, stop or terminate one to get back under it.",
-  },
-  {
-    q: "Is the AI Model Gateway coming back?",
-    a: "Yes — it's paused, not discontinued. Pay-per-token model access is on the roadmap (see your Account page) and will return alongside usage analytics.",
   },
 ];
 

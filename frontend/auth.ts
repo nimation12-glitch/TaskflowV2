@@ -4,10 +4,20 @@ import Credentials from "next-auth/providers/credentials";
 import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
 import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
+import { CredentialsSignin } from "next-auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { bootstrapOrganization, getMembershipsForUser } from "@/lib/backend-internal";
+
+/**
+ * Thrown when a banned account tries to sign in with credentials. NextAuth
+ * serializes the `code` into the error param of the sign-in redirect, so the
+ * login page can distinguish it from a wrong-password failure.
+ */
+class AccountBannedError extends CredentialsSignin {
+  code = "AccountBanned";
+}
 
 const providers: NextAuthConfig["providers"] = [
   Credentials({
@@ -26,6 +36,9 @@ const providers: NextAuthConfig["providers"] = [
 
       const valid = await bcrypt.compare(password, user.passwordHash);
       if (!valid) return null;
+
+      // Banned accounts are refused before a session is ever minted.
+      if (user.bannedAt) throw new AccountBannedError();
 
       return { id: user.id, email: user.email, name: user.name, image: user.image };
     },
@@ -82,6 +95,18 @@ export const config: NextAuthConfig = {
     },
   },
   callbacks: {
+    // Deny banned accounts on OAuth sign-in too — the credentials path is
+    // handled inside authorize(), but OAuth never reaches it.
+    async signIn({ user, account }) {
+      if (account?.provider && account.provider !== "credentials" && user.email) {
+        const dbUser = await prisma.user.findUnique({
+          where: { email: user.email.toLowerCase() },
+          select: { bannedAt: true },
+        });
+        if (dbUser?.bannedAt) return false;
+      }
+      return true;
+    },
     async jwt({ token, user, trigger }) {
       if (user?.id) {
         token.userId = user.id;

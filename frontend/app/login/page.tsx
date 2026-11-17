@@ -26,7 +26,9 @@ export default async function LoginPage({ searchParams }: { searchParams: { call
 
           {searchParams.error && (
             <p className="mt-4 rounded-md bg-danger/10 border border-danger/30 px-3 py-2 text-sm text-danger">
-              Sign-in failed. Check your details and try again.
+              {searchParams.error === "AccountBanned"
+                ? "Your account has been suspended. Contact support@taskflow.web-agent.org if you think this is a mistake."
+                : "Sign-in failed. Check your details and try again."}
             </p>
           )}
 
