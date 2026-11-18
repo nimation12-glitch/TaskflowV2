@@ -129,3 +129,88 @@ def test_gpu_booking_webhook_marks_failed_if_aws_launch_fails_after_payment(db_s
     # booking succeeded, and this is flagged for manual refund review.
     assert instance.status == GpuInstanceStatus.FAILED
     assert "manual refund" in instance.error_detail
+
+
+def test_gpu_booking_webhook_provisions_every_gpu_in_a_multi_order(db_session, organization, gpu_type, ssh_key, monkeypatch):
+    rows = [
+        GpuInstance(
+            organization_id=organization.id, created_by_user_id=uuid.uuid4(), gpu_type_id=gpu_type.id,
+            ssh_key_id=ssh_key.id, status=GpuInstanceStatus.PENDING_PAYMENT, payment_mode=PaymentMode.BOOKING,
+            booking_duration=BookingDuration.DAY, storage_gb=50, hourly_rate_micros=750_000,
+        )
+        for _ in range(3)
+    ]
+    db_session.add_all(rows)
+    db_session.commit()
+
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
+    launches = []
+    monkeypatch.setattr(
+        aws_provider, "launch_instance",
+        lambda *a, **k: launches.append(1) or (f"i-multi-booking-{len(launches)}", "pending", "us-east-1a"),
+    )
+
+    session = {
+        "id": "cs_test_multi",
+        "customer": "cus_test_multi",
+        "metadata": {
+            "organization_id": str(organization.id),
+            "purchase_type": "gpu_booking",
+            "gpu_instance_ids": ",".join(str(r.id) for r in rows),
+        },
+    }
+    stripe_service.handle_checkout_completed(db_session, _checkout_event("evt_booking_multi", session))
+    db_session.commit()
+
+    assert len(launches) == 3
+    for row in rows:
+        db_session.refresh(row)
+        assert row.status == GpuInstanceStatus.PROVISIONING
+        assert row.booking_expires_at is not None
+
+    # A retry of the same event must not double-provision any of them.
+    stripe_service.handle_checkout_completed(db_session, _checkout_event("evt_booking_multi", session))
+    db_session.commit()
+    assert len(launches) == 3
+
+
+def test_gpu_booking_webhook_partial_failure_marks_only_failed_gpu(db_session, organization, gpu_type, ssh_key, monkeypatch):
+    rows = [
+        GpuInstance(
+            organization_id=organization.id, created_by_user_id=uuid.uuid4(), gpu_type_id=gpu_type.id,
+            ssh_key_id=ssh_key.id, status=GpuInstanceStatus.PENDING_PAYMENT, payment_mode=PaymentMode.BOOKING,
+            booking_duration=BookingDuration.DAY, storage_gb=50, hourly_rate_micros=750_000,
+        )
+        for _ in range(2)
+    ]
+    db_session.add_all(rows)
+    db_session.commit()
+
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
+    launches = []
+
+    def _launch(*a, **k):
+        launches.append(1)
+        if len(launches) == 1:
+            return ("i-booking-ok", "pending", "us-east-1a")
+        raise aws_provider.AwsRequestError("capacity gone for the second machine")
+
+    monkeypatch.setattr(aws_provider, "launch_instance", _launch)
+
+    session = {
+        "id": "cs_test_partial",
+        "customer": None,
+        "metadata": {
+            "organization_id": str(organization.id),
+            "purchase_type": "gpu_booking",
+            "gpu_instance_ids": f"{rows[0].id},{rows[1].id}",
+        },
+    }
+    stripe_service.handle_checkout_completed(db_session, _checkout_event("evt_booking_partial", session))
+    db_session.commit()
+
+    # One GPU provisioned, the other flagged for manual refund review — a
+    # sibling's failure must not sink the whole paid booking.
+    assert rows[0].status == GpuInstanceStatus.PROVISIONING
+    assert rows[1].status == GpuInstanceStatus.FAILED
+    assert "manual refund" in rows[1].error_detail

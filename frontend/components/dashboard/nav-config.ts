@@ -1,4 +1,4 @@
-import { LayoutDashboard, CreditCard, Boxes, Cpu, Users, UserCog, ShieldCheck, KeyRound, LifeBuoy, HardDrive } from "lucide-react";
+import { LayoutDashboard, CreditCard, Boxes, Cpu, Users, UserCog, ShieldCheck, KeyRound, LifeBuoy } from "lucide-react";
 
 export type NavItem = {
   href: string;
@@ -18,7 +18,6 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
       { href: "/compute", label: "Compute", icon: Cpu, exact: false },
-      { href: "/workspaces", label: "Workspaces", icon: HardDrive, exact: false },
       { href: "/billing", label: "Billing", icon: CreditCard, exact: false },
       { href: "/models", label: "Models", icon: Boxes, exact: false },
       { href: "/team", label: "Team", icon: Users, exact: false },

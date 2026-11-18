@@ -229,37 +229,58 @@ def create_wallet_topup_checkout_session(db: Session, org: Organization, amount_
 
 
 def create_gpu_booking_checkout_session(
-    db: Session, org: Organization, instance: GpuInstance, gpu_type, amount_micros: int
+    db: Session, org: Organization, instances: list[GpuInstance], gpu_type, amount_micros: int
 ) -> str:
     """
     Booking totals are dynamic (tier x duration x storage add-on), so unlike
     subscriptions/credit packages this uses an ad hoc Stripe price_data line
     item rather than a pre-created Price ID. Metadata carries the pending
-    GpuInstance.id so the webhook can find and provision it — see
-    handle_checkout_completed's "gpu_booking" branch, which is idempotency-
-    guarded against webhook retries (a retry must never double-provision).
+    GpuInstance ids (comma-joined for multi-GPU orders) so the webhook can
+    find and provision them — see handle_checkout_completed's "gpu_booking"
+    branch, which is idempotency-guarded against webhook retries (a retry
+    must never double-provision).
+
+    `instances` is one row per GPU in the order — multi-GPU bookings are a
+    single Stripe line item with quantity=len(instances).
     """
     client = _client()
     if amount_micros <= 0:
         raise ValueError("Booking amount must be positive")
+    if not instances:
+        raise ValueError("Booking requires at least one GPU instance")
     amount_pence = amount_micros // 10_000  # micro-GBP -> pence (inverse of handle_invoice_paid's conversion)
+    quantity = len(instances)
+    unit_amount_pence = amount_pence // quantity  # exact: amount is per-unit x quantity by construction
 
-    duration_label = "24 hours" if instance.booking_duration == BookingDuration.DAY else "7 days"
+    first = instances[0]
+    duration_label = "24 hours" if first.booking_duration == BookingDuration.DAY else "7 days"
+    count_label = f"{quantity} × " if quantity > 1 else ""
 
     # Resolve the region's public name for the checkout copy — the buyer
     # should see where their GPU will live, not an AWS region code.
-    region_label = instance.region_code
-    if instance.region_code:
+    region_label = first.region_code
+    if first.region_code:
         region_row = db.execute(
-            select(Region).where(Region.aws_region_code == instance.region_code)
+            select(Region).where(Region.aws_region_code == first.region_code)
         ).scalar_one_or_none()
         if region_row is not None:
             region_label = region_row.public_name
 
     booking_description = (
-        f"{gpu_type.display_name} rental in {region_label}, {instance.storage_gb} GB storage. "
+        f"{count_label}{gpu_type.display_name} rental in {region_label}, {first.storage_gb} GB storage. "
         f"Fixed {duration_label} booking — charged upfront, auto-terminates when the period ends."
     )
+
+    metadata: dict = {
+        "organization_id": str(org.id),
+        "purchase_type": "gpu_booking",
+        # Comma-joined ids drive the webhook for every order size; the
+        # legacy single-id key is kept alongside for one-GPU bookings so
+        # older payloads and tooling keep working.
+        "gpu_instance_ids": ",".join(str(i.id) for i in instances),
+    }
+    if quantity == 1:
+        metadata["gpu_instance_id"] = str(first.id)
 
     session_kwargs: dict = dict(
         mode="payment",
@@ -268,12 +289,12 @@ def create_gpu_booking_checkout_session(
                 "price_data": {
                     "currency": "gbp",
                     "product_data": {
-                        "name": f"{gpu_type.display_name} GPU booking — {duration_label}",
+                        "name": f"{count_label}{gpu_type.display_name} GPU booking — {duration_label}",
                         "description": booking_description,
                     },
-                    "unit_amount": amount_pence,
+                    "unit_amount": unit_amount_pence,
                 },
-                "quantity": 1,
+                "quantity": quantity,
             }
         ],
         success_url=f"{settings.app_base_url}/dashboard/compute?checkout=success",
@@ -281,11 +302,7 @@ def create_gpu_booking_checkout_session(
         custom_text={
             "submit": {"message": "You're booking a fixed rental period — the total is charged now and the instance auto-terminates when it ends."}
         },
-        metadata={
-            "organization_id": str(org.id),
-            "purchase_type": "gpu_booking",
-            "gpu_instance_id": str(instance.id),
-        },
+        metadata=metadata,
     )
     existing_customer_id = _existing_stripe_customer_id(db, org)
     if existing_customer_id:
@@ -381,73 +398,86 @@ def handle_checkout_completed(db: Session, event: dict) -> None:
             stripe_checkout_session_id=session.get("id"),
         )
     elif purchase_type == "gpu_booking":
-        gpu_instance_id_raw = metadata.get("gpu_instance_id")
-        if not gpu_instance_id_raw:
+        # Multi-GPU orders carry comma-joined ids in gpu_instance_ids; older
+        # single-GPU payloads (created before multi-GPU bookings existed) only
+        # have gpu_instance_id — both must keep provisioning.
+        ids_raw = metadata.get("gpu_instance_ids") or metadata.get("gpu_instance_id")
+        if not ids_raw:
             return
-        instance = db.get(GpuInstance, uuid.UUID(gpu_instance_id_raw))
-        if instance is None:
+        try:
+            instance_ids = [uuid.UUID(part) for part in ids_raw.split(",") if part.strip()]
+        except ValueError:
             return
-        if instance.status != GpuInstanceStatus.PENDING_PAYMENT:
-            # Idempotency guard: a webhook retry (or a replayed event) must
-            # never double-provision an already-provisioned booking.
+        if not instance_ids:
             return
 
         _backfill_stripe_customer(db, org_id, session)
-
-        hours = 24 if instance.booking_duration == BookingDuration.DAY else 24 * 7
-        instance.booking_expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
 
         from app.compute import aws_provider
         from app.compute import ami_resolver
         from app.models.region import GpuRegionAvailability, Region
         from app.services import ssh_keys as ssh_key_service
 
-        ssh_key = db.get(SshKey, instance.ssh_key_id)
-        try:
-            aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(db, ssh_key, region_name=instance.region_code)
-            ami_id = None
-            if instance.region_code:
-                # Launch in the region the customer was quoted for (§13/§24).
-                # The scheduler already resolved and cached the regional AMI
-                # when the booking was created; this refreshes it if the TTL
-                # lapsed between checkout and payment.
-                availability = db.execute(
-                    select(GpuRegionAvailability)
-                    .join(Region, GpuRegionAvailability.region_id == Region.id)
-                    .where(
-                        GpuRegionAvailability.gpu_type_id == instance.gpu_type_id,
-                        Region.aws_region_code == instance.region_code,
-                    )
-                ).scalar_one_or_none()
-                if availability is not None:
-                    ami_id = ami_resolver.get_or_resolve_ami(db, availability)
-            aws_instance_id, _initial_state, availability_zone = aws_provider.launch_instance(
-                instance.gpu_type,
-                instance.storage_gb,
-                aws_key_pair_name,
-                tags={
-                    "Name": f"taskflow-{instance.id}",
-                    "taskflow:gpu_instance_id": str(instance.id),
-                    "taskflow:organization_id": str(org_id),
-                },
-                region_name=instance.region_code,
-                ami_id=ami_id,
-            )
-        except aws_provider.AwsProviderError as exc:
-            # Stripe has already captured payment at this point. A failed
-            # provisioning after payment needs a human to refund via the
-            # Stripe dashboard — this is not built as an automatic refund
-            # flow. Never silently pretend the booking succeeded.
-            instance.status = GpuInstanceStatus.FAILED
-            instance.error_detail = f"Provisioning failed after payment — needs manual refund review: {exc}"[:500]
-            db.flush()
-            return
+        for instance_id in instance_ids:
+            instance = db.get(GpuInstance, instance_id)
+            if instance is None:
+                continue
+            if instance.status != GpuInstanceStatus.PENDING_PAYMENT:
+                # Idempotency guard: a webhook retry (or a replayed event) must
+                # never double-provision an already-provisioned booking.
+                continue
 
-        instance.aws_instance_id = aws_instance_id
-        instance.availability_zone = availability_zone
-        instance.status = GpuInstanceStatus.PROVISIONING
-        instance.provisioning_started_at = datetime.now(timezone.utc)
-        db.flush()
+            hours = 24 if instance.booking_duration == BookingDuration.DAY else 24 * 7
+            instance.booking_expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+
+            ssh_key = db.get(SshKey, instance.ssh_key_id)
+            try:
+                aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(db, ssh_key, region_name=instance.region_code)
+                ami_id = None
+                if instance.region_code:
+                    # Launch in the region the customer was quoted for (§13/§24).
+                    # The scheduler already resolved and cached the regional AMI
+                    # when the booking was created; this refreshes it if the TTL
+                    # lapsed between checkout and payment.
+                    availability = db.execute(
+                        select(GpuRegionAvailability)
+                        .join(Region, GpuRegionAvailability.region_id == Region.id)
+                        .where(
+                            GpuRegionAvailability.gpu_type_id == instance.gpu_type_id,
+                            Region.aws_region_code == instance.region_code,
+                        )
+                    ).scalar_one_or_none()
+                    if availability is not None:
+                        ami_id = ami_resolver.get_or_resolve_ami(db, availability)
+                aws_instance_id, _initial_state, availability_zone = aws_provider.launch_instance(
+                    instance.gpu_type,
+                    instance.storage_gb,
+                    aws_key_pair_name,
+                    tags={
+                        "Name": f"taskflow-{instance.id}",
+                        "taskflow:gpu_instance_id": str(instance.id),
+                        "taskflow:organization_id": str(org_id),
+                    },
+                    region_name=instance.region_code,
+                    ami_id=ami_id,
+                )
+            except aws_provider.AwsProviderError as exc:
+                # Stripe has already captured payment at this point. A failed
+                # provisioning after payment needs a human to refund via the
+                # Stripe dashboard — this is not built as an automatic refund
+                # flow. Never silently pretend the booking succeeded. Sibling
+                # GPUs in the same order still get their own launch attempt:
+                # a partial hardware failure must not sink the whole booking.
+                instance.status = GpuInstanceStatus.FAILED
+                instance.error_detail = f"Provisioning failed after payment — needs manual refund review: {exc}"[:500]
+                db.flush()
+                continue
+
+            instance.aws_instance_id = aws_instance_id
+            instance.availability_zone = availability_zone
+            instance.status = GpuInstanceStatus.PROVISIONING
+            instance.provisioning_started_at = datetime.now(timezone.utc)
+            db.flush()
 
 
 def _sync_subscription_row(db: Session, org_id: uuid.UUID, stripe_sub: dict) -> Subscription:

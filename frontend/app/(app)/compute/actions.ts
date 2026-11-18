@@ -13,6 +13,7 @@ export async function createRentalAction(input: {
   payment_mode: "pay_as_you_go" | "booking";
   booking_duration?: "day" | "week";
   location_preference?: LocationPreference;
+  quantity?: number;
 }) {
   const result = await createRental(input);
   if ("checkout_url" in result) {

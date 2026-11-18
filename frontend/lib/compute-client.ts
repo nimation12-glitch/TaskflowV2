@@ -34,6 +34,8 @@ export function createRental(input: {
   payment_mode: "pay_as_you_go" | "booking";
   booking_duration?: "day" | "week";
   location_preference?: LocationPreference;
+  // Multi-GPU: rent N identical copies of this SKU in one order (1..10).
+  quantity?: number;
 }) {
   return backendJson<Rental | { checkout_url: string }>("/compute/rentals", {
     method: "POST",

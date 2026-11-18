@@ -3,7 +3,7 @@ import uuid
 import pytest
 
 from app.compute import aws_provider
-from app.models.billing import CreditTransactionType
+from app.models.billing import CreditTransactionType, PlanCode
 from app.models.compute import BookingDuration, GpuInstance, GpuInstanceStatus, PaymentMode
 from app.models.org import Organization
 from app.services import credits as credits_service
@@ -279,3 +279,145 @@ def test_booking_creates_pending_payment_and_checkout_url(db_session, organizati
     assert len(all_rows) == 1
     assert all_rows[0].status == GpuInstanceStatus.PENDING_PAYMENT
     assert gpu_rental_service.list_org_rentals(db_session, organization.id) == []
+
+
+# ---------- multi-GPU quantity ----------
+
+
+def _upgrade_to(db_session, organization, plan_code):
+    from app.models.billing import Plan, Subscription, SubscriptionStatus
+    from sqlalchemy import select
+
+    plan = db_session.execute(select(Plan).where(Plan.code == plan_code)).scalar_one()
+    db_session.add(
+        Subscription(organization_id=organization.id, plan_id=plan.id, status=SubscriptionStatus.ACTIVE, cancel_at_period_end=False)
+    )
+    db_session.commit()
+    return plan
+
+
+def test_multi_gpu_quantity_creates_n_instances(db_session, organization, gpu_type, ssh_key, monkeypatch):
+    _upgrade_to(db_session, organization, PlanCode.PRO)
+    _fund_wallet(db_session, organization.id)
+
+    launches = []
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
+    monkeypatch.setattr(aws_provider, "launch_instance", lambda *a, **k: launches.append(1) or (f"i-multi{len(launches)}", "pending", "us-east-1a"))
+
+    result = gpu_rental_service.create_rental(
+        db_session, organization_id=organization.id, user_id=uuid.uuid4(), org=organization,
+        gpu_type_slug=gpu_type.slug, storage_gb=50, ssh_key_id=ssh_key.id,
+        payment_mode=PaymentMode.PAY_AS_YOU_GO, booking_duration=None, quantity=2,
+    )
+    assert len(launches) == 2
+    rows = db_session.query(GpuInstance).filter_by(organization_id=organization.id).all()
+    assert len(rows) == 2
+    assert all(r.status == GpuInstanceStatus.PROVISIONING for r in rows)
+    assert {r.aws_instance_id for r in rows} == {"i-multi1", "i-multi2"}
+    assert result.instance.id in {r.id for r in rows}
+
+
+def test_multi_gpu_booking_creates_n_pending_rows(db_session, organization, gpu_type, ssh_key, monkeypatch):
+    from app.billing import stripe_service
+
+    _upgrade_to(db_session, organization, PlanCode.PRO)
+
+    captured = {}
+
+    def _fake_checkout(db, org, instances, gpu_type_, total_amount_micros):
+        captured["instances"] = list(instances)
+        captured["total"] = total_amount_micros
+        return "https://checkout.stripe.com/fake"
+
+    monkeypatch.setattr(stripe_service, "create_gpu_booking_checkout_session", _fake_checkout)
+
+    gpu_rental_service.create_rental(
+        db_session, organization_id=organization.id, user_id=uuid.uuid4(), org=organization,
+        gpu_type_slug=gpu_type.slug, storage_gb=50, ssh_key_id=ssh_key.id,
+        payment_mode=PaymentMode.BOOKING, booking_duration=BookingDuration.DAY, quantity=3,
+    )
+    rows = db_session.query(GpuInstance).filter_by(organization_id=organization.id).all()
+    assert len(rows) == 3
+    assert all(r.status == GpuInstanceStatus.PENDING_PAYMENT for r in rows)
+    assert len(captured["instances"]) == 3
+    # 3 GPUs × the quoted hourly rate × 24h — the line item total covers the
+    # whole order (PRO's rate_bps discount is already inside hourly_rate).
+    assert captured["total"] == rows[0].hourly_rate_micros * 24 * 3
+
+
+def test_quantity_capped_at_ten(db_session, organization, gpu_type, ssh_key):
+    _fund_wallet(db_session, organization.id)
+    with pytest.raises(gpu_rental_service.InvalidQuantityError):
+        gpu_rental_service.create_rental(
+            db_session, organization_id=organization.id, user_id=uuid.uuid4(), org=organization,
+            gpu_type_slug=gpu_type.slug, storage_gb=50, ssh_key_id=ssh_key.id,
+            payment_mode=PaymentMode.PAY_AS_YOU_GO, booking_duration=None, quantity=11,
+        )
+
+
+def test_quantity_respects_concurrent_limit(db_session, organization, gpu_type, ssh_key):
+    # FREE plan allows exactly 1 concurrent rental — a quantity of 2 must be
+    # rejected up front, wallet balance notwithstanding.
+    _fund_wallet(db_session, organization.id)
+    with pytest.raises(gpu_rental_service.ConcurrentRentalLimitError):
+        gpu_rental_service.create_rental(
+            db_session, organization_id=organization.id, user_id=uuid.uuid4(), org=organization,
+            gpu_type_slug=gpu_type.slug, storage_gb=50, ssh_key_id=ssh_key.id,
+            payment_mode=PaymentMode.PAY_AS_YOU_GO, booking_duration=None, quantity=2,
+        )
+    assert db_session.query(GpuInstance).filter_by(organization_id=organization.id).count() == 0
+
+
+def test_multi_gpu_reserve_covers_the_whole_order(db_session, organization, gpu_type, ssh_key):
+    # PRO (3 concurrent) — wallet only covers ~2 hours; quantity=3 needs 3×
+    # the single-GPU reserve and must be refused.
+    from app.services import scheduler
+
+    _upgrade_to(db_session, organization, PlanCode.PRO)
+    _fund_wallet(db_session, organization.id, amount_micros=1_500_000)
+    plan = gpu_rental_service.get_plan_for_org(db_session, organization.id)
+    single_reserve = scheduler.reserve_amount_micros(
+        gpu_type, gpu_rental_service.compute_hourly_rate_micros(gpu_type, 50, plan)
+    )
+    assert 1_500_000 >= single_reserve  # one GPU would pass; three must not
+    with pytest.raises(gpu_rental_service.InsufficientWalletBalanceError):
+        gpu_rental_service.create_rental(
+            db_session, organization_id=organization.id, user_id=uuid.uuid4(), org=organization,
+            gpu_type_slug=gpu_type.slug, storage_gb=50, ssh_key_id=ssh_key.id,
+            payment_mode=PaymentMode.PAY_AS_YOU_GO, booking_duration=None, quantity=3,
+        )
+    assert db_session.query(GpuInstance).filter_by(organization_id=organization.id).count() == 0
+
+
+def test_partial_payg_failure_is_all_or_nothing(db_session, organization, gpu_type, ssh_key, monkeypatch):
+    _upgrade_to(db_session, organization, PlanCode.PRO)
+    _fund_wallet(db_session, organization.id)
+
+    monkeypatch.setattr(aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name)
+
+    launches = []
+
+    def _launch(*a, **k):
+        launches.append(1)
+        if len(launches) == 1:
+            return ("i-first-ok", "pending", "us-east-1a")
+        raise aws_provider.AwsRequestError("capacity gone for the second machine")
+
+    monkeypatch.setattr(aws_provider, "launch_instance", _launch)
+
+    terminate_calls = []
+    monkeypatch.setattr(aws_provider, "terminate_instance", lambda iid, region_name=None: terminate_calls.append(iid))
+
+    with pytest.raises(gpu_rental_service.ProvisioningFailedError):
+        gpu_rental_service.create_rental(
+            db_session, organization_id=organization.id, user_id=uuid.uuid4(), org=organization,
+            gpu_type_slug=gpu_type.slug, storage_gb=50, ssh_key_id=ssh_key.id,
+            payment_mode=PaymentMode.PAY_AS_YOU_GO, booking_duration=None, quantity=2,
+        )
+
+    rows = db_session.query(GpuInstance).filter_by(organization_id=organization.id).all()
+    statuses = {r.status for r in rows}
+    # The already-running machine is torn down (never silently billed for a
+    # partial order); the failed one stays visible as FAILED.
+    assert statuses == {GpuInstanceStatus.TERMINATED, GpuInstanceStatus.FAILED}
+    assert terminate_calls == ["i-first-ok"]

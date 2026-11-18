@@ -35,6 +35,11 @@ INCLUDED_STORAGE_GB = 100
 STORAGE_BLOCK_GB = 100
 STORAGE_MICROS_PER_BLOCK = 30_000
 
+# Multi-GPU rentals (rent N copies of the same SKU in one request). The cap
+# matches the MAX plan's concurrent-rental ceiling, so even a full-cart MAX
+# order fits inside a single plan's limits.
+MAX_RENTALS_PER_REQUEST = 10
+
 _ACTIVE_STATUSES_FOR_CONCURRENCY = (
     GpuInstanceStatus.PROVISIONING,
     GpuInstanceStatus.RUNNING,
@@ -87,8 +92,8 @@ class WorkspaceNotFoundError(GpuRentalError):
     pass
 
 
-class WorkspaceOccupiedError(GpuRentalError):
-    pass
+class InvalidQuantityError(GpuRentalError):
+    """quantity is outside 1..MAX_RENTALS_PER_REQUEST — a client bug, HTTP 400."""
 
 
 class InvalidRentalStateError(GpuRentalError):
@@ -197,8 +202,14 @@ def create_rental(
     booking_duration: Optional[BookingDuration],
     workspace_id: Optional[uuid.UUID] = None,
     location_preference: str = "automatic",
+    quantity: int = 1,
 ) -> CreateRentalResult:
     plan = get_plan_for_org(db, organization_id)
+
+    # Multi-GPU: N identical copies of the chosen SKU, created and billed as
+    # one order. Every plan limit below is checked against the whole order.
+    if not isinstance(quantity, int) or isinstance(quantity, bool) or not (1 <= quantity <= MAX_RENTALS_PER_REQUEST):
+        raise InvalidQuantityError(f"quantity must be between 1 and {MAX_RENTALS_PER_REQUEST}")
 
     gpu_type = get_gpu_type_by_slug(db, gpu_type_slug)
     if gpu_type is None:
@@ -220,9 +231,10 @@ def create_rental(
             raise WorkspaceNotFoundError("Workspace not found")
         if workspace.status != WorkspaceStatus.ACTIVE:
             raise InvalidRentalStateError("Workspace is deleted")
-        # One active compute attachment per workspace at launch (spec §22).
-        if workspace_service.workspace_has_active_rental(db, workspace.id):
-            raise WorkspaceOccupiedError("Another active GPU rental is already attached to this workspace")
+        # Multiple active rentals may share one workspace — a workspace is a
+        # persistent home directory, not a slot that locks (spec §22, as
+        # revised for multi-GPU orders). Only deletion is guarded against
+        # active rentals (workspaces.py delete path).
 
     ssh_key = (
         ssh_key_service.get_org_ssh_key(db, organization_id, ssh_key_id)
@@ -236,10 +248,13 @@ def create_rental(
     if ssh_key is None:
         raise SshKeyNotFoundError("SSH key not found")
 
-    if count_concurrent_rentals(db, organization_id) >= plan.gpu_max_concurrent_rentals:
+    active_rentals = count_concurrent_rentals(db, organization_id)
+    if active_rentals + quantity > plan.gpu_max_concurrent_rentals:
+        room = max(0, plan.gpu_max_concurrent_rentals - active_rentals)
         raise ConcurrentRentalLimitError(
-            f"Your plan allows up to {plan.gpu_max_concurrent_rentals} concurrent GPU rental(s). "
-            "Stop or terminate an existing rental, or upgrade your plan."
+            f"Your plan allows up to {plan.gpu_max_concurrent_rentals} concurrent GPU rental(s) and you already "
+            f"run {active_rentals} — only {room} more can start. Reduce the quantity, stop or terminate an existing "
+            "rental, or upgrade your plan."
         )
 
     if payment_mode == PaymentMode.BOOKING:
@@ -283,153 +298,188 @@ def create_rental(
         account = credits_service.get_or_create_account(db, organization_id)
         # Minimum rental / wallet reserve (spec §20): every configuration
         # requires cover for at least its minimum rental before launch;
-        # ULTRA-tier GPUs (A100/H100) require a stronger reserve.
-        reserve_micros = scheduler.reserve_amount_micros(gpu_type, hourly_rate_micros)
+        # ULTRA-tier GPUs (A100/H100) require a stronger reserve. The reserve
+        # covers the WHOLE order — N machines, not just the first one.
+        reserve_micros = scheduler.reserve_amount_micros(gpu_type, hourly_rate_micros) * quantity
         if account.balance_micros < reserve_micros:
             hours = scheduler.reserve_hours_for(gpu_type)
             if hours > 1:
                 raise InsufficientWalletBalanceError(
                     f"High-cost GPUs require your wallet to cover the first {hours} hours at this "
-                    "rate — top up your wallet first"
+                    f"rate for {quantity} GPU{'' if quantity == 1 else 's'} — top up your wallet first"
                 )
             raise InsufficientWalletBalanceError(
                 "Your wallet balance won't cover even an hour at this rate — top up your wallet first"
             )
 
+        from app.compute import aws_provider
+
+        instances: list[GpuInstance] = []
+        launched_ok: list[GpuInstance] = []
+        last_error: Optional[Exception] = None
+        try:
+            for _ in range(quantity):
+                instance = GpuInstance(
+                    organization_id=organization_id,
+                    created_by_user_id=user_id,
+                    gpu_type_id=gpu_type.id,
+                    ssh_key_id=ssh_key.id,
+                    workspace_id=workspace.id if workspace is not None else None,
+                    status=GpuInstanceStatus.PROVISIONING,
+                    payment_mode=PaymentMode.PAY_AS_YOU_GO,
+                    storage_gb=storage_gb,
+                    hourly_rate_micros=hourly_rate_micros,
+                    region_code=region_code,
+                    regional_premium_micros=premium_micros,
+                    provisioning_started_at=datetime.now(timezone.utc),
+                    last_billed_at=datetime.now(timezone.utc),
+                )
+                db.add(instance)
+                db.flush()
+                instances.append(instance)
+
+                if candidates is None:
+                    # Legacy single-region path — no regional matrix for this SKU.
+                    try:
+                        aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(db, ssh_key)
+                        aws_instance_id, initial_state, availability_zone = aws_provider.launch_instance(
+                            gpu_type,
+                            storage_gb,
+                            aws_key_pair_name,
+                            tags={
+                                "Name": f"taskflow-{instance.id}",
+                                "taskflow:gpu_instance_id": str(instance.id),
+                                "taskflow:organization_id": str(organization_id),
+                            },
+                        )
+                    except aws_provider.AwsProviderError as exc:
+                        instance.status = GpuInstanceStatus.FAILED
+                        instance.error_detail = str(exc)[:500]
+                        db.flush()
+                        raise ProvisioningFailedError(str(exc)) from exc
+                    instance.aws_instance_id = aws_instance_id
+                    instance.availability_zone = availability_zone
+                    db.flush()
+                    launched_ok.append(instance)
+                    continue
+
+                # Multi-region launch loop (spec §13): walk the ordered candidates
+                # until AWS accepts a launch. Capacity shortfalls and region-level
+                # failures (unresolvable AMI, permissions...) fall back to the next
+                # region — that is the §13/§19 fallback, not an error to hide.
+                launched = False
+                for candidate in candidates:
+                    rate = scheduler.customer_hourly_rate_micros(
+                        gpu_type, plan, candidate.premium_micros, storage_gb
+                    )
+                    # The machines still to come in this order must be coverable
+                    # at this region's rate too, or the region is not affordable.
+                    remaining = quantity - len(launched_ok)
+                    if account.balance_micros < scheduler.reserve_amount_micros(gpu_type, rate) * remaining:
+                        last_error = InsufficientWalletBalanceError(
+                            f"Wallet cannot cover the {candidate.region_code} premium for {remaining} "
+                            "GPU(s) — no affordable region left"
+                        )
+                        continue
+                    try:
+                        aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(
+                            db, ssh_key, region_name=candidate.region_code
+                        )
+                        aws_instance_id, initial_state, availability_zone = aws_provider.launch_instance(
+                            gpu_type,
+                            storage_gb,
+                            aws_key_pair_name,
+                            tags={
+                                "Name": f"taskflow-{instance.id}",
+                                "taskflow:gpu_instance_id": str(instance.id),
+                                "taskflow:organization_id": str(organization_id),
+                            },
+                            region_name=candidate.region_code,
+                            ami_id=candidate.ami_id,
+                        )
+                    except aws_provider.AwsNotConfiguredError as exc:
+                        # A configuration problem fails identically in every region —
+                        # no point walking the rest of the list.
+                        last_error = exc
+                        break
+                    except aws_provider.AwsProviderError as exc:
+                        last_error = exc
+                        continue
+
+                    instance.aws_instance_id = aws_instance_id
+                    instance.region_code = candidate.region_code
+                    instance.availability_zone = availability_zone
+                    instance.regional_premium_micros = candidate.premium_micros
+                    # The rate reflects the region actually launched in (§24) —
+                    # fallback regions may carry a different premium than the first
+                    # candidate the row was pre-created with.
+                    instance.hourly_rate_micros = rate
+                    db.flush()
+                    launched = True
+                    break
+
+                if not launched:
+                    instance.status = GpuInstanceStatus.FAILED
+                    instance.error_detail = str(last_error)[:500] if last_error else "No region could host this launch"
+                    db.flush()
+                    raise ProvisioningFailedError(
+                        str(last_error) if last_error else "No region could host this launch"
+                    ) from last_error
+                launched_ok.append(instance)
+        except ProvisioningFailedError:
+            # All-or-nothing for multi-GPU orders: the customer asked for N
+            # machines as one order at one price — a partial launch (some
+            # billing, some missing) is never acceptable. Best-effort tear
+            # down anything already running, then surface the failure.
+            for ok_instance in launched_ok:
+                if ok_instance.aws_instance_id:
+                    try:
+                        aws_provider.terminate_instance(
+                            ok_instance.aws_instance_id, region_name=ok_instance.region_code
+                        )
+                    except aws_provider.AwsProviderError:
+                        pass  # orphan cleanup is retried by the billing sweep
+                ok_instance.status = GpuInstanceStatus.TERMINATED
+                ok_instance.terminated_at = datetime.now(timezone.utc)
+                ok_instance.error_detail = "Order cancelled — not every GPU in the quantity could be provisioned"
+            db.flush()
+            raise
+
+        return CreateRentalResult(instance=instances[0], checkout_url=None)
+
+    # BOOKING mode: no AWS provisioning until Stripe confirms payment.
+    # The region (and its premium, already inside hourly_rate_micros) is
+    # selected NOW — the customer must know the final price before paying,
+    # and the webhook launches into this exact region later. One PENDING_PAYMENT
+    # row per GPU in the order; the Stripe line item carries quantity=N and the
+    # webhook provisions all of them from gpu_instance_ids metadata.
+    booking_instances: list[GpuInstance] = []
+    for _ in range(quantity):
         instance = GpuInstance(
             organization_id=organization_id,
             created_by_user_id=user_id,
             gpu_type_id=gpu_type.id,
             ssh_key_id=ssh_key.id,
             workspace_id=workspace.id if workspace is not None else None,
-            status=GpuInstanceStatus.PROVISIONING,
-            payment_mode=PaymentMode.PAY_AS_YOU_GO,
+            status=GpuInstanceStatus.PENDING_PAYMENT,
+            payment_mode=PaymentMode.BOOKING,
+            booking_duration=booking_duration,
             storage_gb=storage_gb,
             hourly_rate_micros=hourly_rate_micros,
             region_code=region_code,
             regional_premium_micros=premium_micros,
-            provisioning_started_at=datetime.now(timezone.utc),
-            last_billed_at=datetime.now(timezone.utc),
         )
         db.add(instance)
-        db.flush()
-
-        from app.compute import aws_provider
-
-        if candidates is None:
-            # Legacy single-region path — no regional matrix for this SKU.
-            try:
-                aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(db, ssh_key)
-                aws_instance_id, initial_state, availability_zone = aws_provider.launch_instance(
-                    gpu_type,
-                    storage_gb,
-                    aws_key_pair_name,
-                    tags={
-                        "Name": f"taskflow-{instance.id}",
-                        "taskflow:gpu_instance_id": str(instance.id),
-                        "taskflow:organization_id": str(organization_id),
-                    },
-                )
-            except aws_provider.AwsProviderError as exc:
-                instance.status = GpuInstanceStatus.FAILED
-                instance.error_detail = str(exc)[:500]
-                db.flush()
-                raise ProvisioningFailedError(str(exc)) from exc
-            instance.aws_instance_id = aws_instance_id
-            instance.availability_zone = availability_zone
-            db.flush()
-            return CreateRentalResult(instance=instance, checkout_url=None)
-
-        # Multi-region launch loop (spec §13): walk the ordered candidates
-        # until AWS accepts a launch. Capacity shortfalls and region-level
-        # failures (unresolvable AMI, permissions...) fall back to the next
-        # region — that is the §13/§19 fallback, not an error to hide.
-        launched = False
-        last_error: Optional[Exception] = None
-        for candidate in candidates:
-            rate = scheduler.customer_hourly_rate_micros(
-                gpu_type, plan, candidate.premium_micros, storage_gb
-            )
-            if account.balance_micros < scheduler.reserve_amount_micros(gpu_type, rate):
-                last_error = InsufficientWalletBalanceError(
-                    f"Wallet cannot cover the {candidate.region_code} premium — no affordable region left"
-                )
-                continue
-            try:
-                aws_key_pair_name = ssh_key_service.ensure_aws_key_pair(
-                    db, ssh_key, region_name=candidate.region_code
-                )
-                aws_instance_id, initial_state, availability_zone = aws_provider.launch_instance(
-                    gpu_type,
-                    storage_gb,
-                    aws_key_pair_name,
-                    tags={
-                        "Name": f"taskflow-{instance.id}",
-                        "taskflow:gpu_instance_id": str(instance.id),
-                        "taskflow:organization_id": str(organization_id),
-                    },
-                    region_name=candidate.region_code,
-                    ami_id=candidate.ami_id,
-                )
-            except aws_provider.AwsNotConfiguredError as exc:
-                # A configuration problem fails identically in every region —
-                # no point walking the rest of the list.
-                last_error = exc
-                break
-            except aws_provider.AwsProviderError as exc:
-                last_error = exc
-                continue
-
-            instance.aws_instance_id = aws_instance_id
-            instance.region_code = candidate.region_code
-            instance.availability_zone = availability_zone
-            instance.regional_premium_micros = candidate.premium_micros
-            # The rate reflects the region actually launched in (§24) —
-            # fallback regions may carry a different premium than the first
-            # candidate the row was pre-created with.
-            instance.hourly_rate_micros = rate
-            db.flush()
-            launched = True
-            break
-
-        if not launched:
-            instance.status = GpuInstanceStatus.FAILED
-            instance.error_detail = str(last_error)[:500] if last_error else "No region could host this launch"
-            db.flush()
-            raise ProvisioningFailedError(
-                str(last_error) if last_error else "No region could host this launch"
-            ) from last_error
-
-        return CreateRentalResult(instance=instance, checkout_url=None)
-
-    # BOOKING mode: no AWS provisioning until Stripe confirms payment.
-    # The region (and its premium, already inside hourly_rate_micros) is
-    # selected NOW — the customer must know the final price before paying,
-    # and the webhook launches into this exact region later.
-    instance = GpuInstance(
-        organization_id=organization_id,
-        created_by_user_id=user_id,
-        gpu_type_id=gpu_type.id,
-        ssh_key_id=ssh_key.id,
-        workspace_id=workspace.id if workspace is not None else None,
-        status=GpuInstanceStatus.PENDING_PAYMENT,
-        payment_mode=PaymentMode.BOOKING,
-        booking_duration=booking_duration,
-        storage_gb=storage_gb,
-        hourly_rate_micros=hourly_rate_micros,
-        region_code=region_code,
-        regional_premium_micros=premium_micros,
-    )
-    db.add(instance)
+        booking_instances.append(instance)
     db.flush()
 
     hours = _BOOKING_HOURS[booking_duration]
-    total_amount_micros = hourly_rate_micros * hours
+    total_amount_micros = hourly_rate_micros * hours * quantity
 
     from app.billing import stripe_service
 
     checkout_url = stripe_service.create_gpu_booking_checkout_session(
-        db, org, instance, gpu_type, total_amount_micros
+        db, org, booking_instances, gpu_type, total_amount_micros
     )
     return CreateRentalResult(instance=None, checkout_url=checkout_url)
 

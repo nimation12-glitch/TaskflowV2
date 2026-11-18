@@ -9,6 +9,9 @@ import {
   attachWorkspaceSshKey,
 } from "@/lib/workspaces-client";
 
+// Workspaces live on the merged /compute page now (Catalogue / Workspaces /
+// SSH keys tabs); every action revalidates that page.
+
 export async function createWorkspaceAction(input: {
   name: string;
   storage_size_gb: number;
@@ -16,25 +19,25 @@ export async function createWorkspaceAction(input: {
   ssh_key_id?: string;
 }) {
   await createWorkspace(input);
-  revalidatePath("/workspaces");
+  revalidatePath("/compute");
 }
 
 export async function deleteWorkspaceAction(id: string) {
   await deleteWorkspace(id);
-  revalidatePath("/workspaces");
+  revalidatePath("/compute");
 }
 
 export async function resizeWorkspaceAction(id: string, storageSizeGb: number) {
   await resizeWorkspace(id, storageSizeGb);
-  revalidatePath("/workspaces");
+  revalidatePath("/compute");
 }
 
 export async function buyPrepaidAction(id: string) {
   await buyPrepaid(id);
-  revalidatePath("/workspaces");
+  revalidatePath("/compute");
 }
 
 export async function attachWorkspaceSshKeyAction(id: string, sshKeyId: string) {
   await attachWorkspaceSshKey(id, sshKeyId);
-  revalidatePath("/workspaces");
+  revalidatePath("/compute");
 }

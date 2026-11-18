@@ -379,7 +379,7 @@ def test_booking_mode_quotes_region_and_premium_upfront(db_session, organization
     monkeypatch.setattr(
         stripe_service,
         "create_gpu_booking_checkout_session",
-        lambda db, org, instance, gpu_type, total_amount_micros: "https://checkout.stripe.test/session",
+        lambda db, org, instances, gpu_type, total_amount_micros: "https://checkout.stripe.test/session",
     )
     _pro_org(db_session, organization)
     uk = _region(db_session, "eu-west-2", area="UK")

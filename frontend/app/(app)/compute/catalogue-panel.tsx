@@ -55,6 +55,7 @@ export function CataloguePanel({
   const [workspaceId, setWorkspaceId] = useState("");
   const [mode, setMode] = useState<"pay_as_you_go" | "booking">("pay_as_you_go");
   const [duration, setDuration] = useState<"day" | "week">("day");
+  const [quantity, setQuantity] = useState(1);
   const { pending, run } = useAction();
 
   const sku = gpuTypes.find((t) => t.slug === skuSlug) ?? gpuTypes[0];
@@ -84,12 +85,20 @@ export function CataloguePanel({
     () => (sku ? priceBreakdown(sku, storageGb, plan, pref.premiumMicros) : null),
     [sku, storageGb, plan, pref]
   );
-  const bookingTotal = price ? bookingTotalMicros(price.totalHourlyMicros, duration) : 0;
-  const hoursLeft = price ? estimatedHoursRemaining(walletBalanceMicros, price.totalHourlyMicros) : null;
+  // Multi-GPU: N identical copies of the selected SKU rent as one order.
+  // The picker can never exceed the plan's remaining concurrent slots or
+  // the platform cap of 10 GPUs per order.
+  const remainingSlots = Math.max(0, limits.concurrentRentals - concurrentUsed);
+  const maxQuantity = Math.max(1, Math.min(10, remainingSlots));
+  const gpuCount = Math.min(quantity, maxQuantity);
+  const hourlyTotal = price ? price.totalHourlyMicros * gpuCount : 0;
+  const bookingTotal = price ? bookingTotalMicros(price.totalHourlyMicros, duration) * gpuCount : 0;
+  const hoursLeft = price ? estimatedHoursRemaining(walletBalanceMicros, hourlyTotal) : null;
   const reserveHours = sku ? reserveHoursFor(sku) : 1;
-  const reserveNeeded = price ? price.totalHourlyMicros * reserveHours : 0;
-  // PAYG needs wallet cover for the §20 reserve before launch; bookings are
-  // paid through Stripe checkout instead, so the wallet isn't involved.
+  const reserveNeeded = price ? price.totalHourlyMicros * reserveHours * gpuCount : 0;
+  // PAYG needs wallet cover for the §20 reserve (× the whole order) before
+  // launch; bookings are paid through Stripe checkout instead, so the wallet
+  // isn't involved.
   const insufficientBalance =
     price && mode === "pay_as_you_go" ? walletBalanceMicros < reserveNeeded : false;
 
@@ -123,9 +132,18 @@ export function CataloguePanel({
           ...(workspaceId ? { workspace_id: workspaceId } : {}),
           payment_mode: mode,
           location_preference: location,
+          quantity: gpuCount,
           ...(mode === "booking" ? { booking_duration: duration } : {}),
         }),
-      { success: mode === "pay_as_you_go" ? "GPU rental starting…" : "Redirecting to checkout…", error: "Couldn't start the rental" }
+      {
+        success:
+          gpuCount > 1
+            ? `Starting ${gpuCount} × ${sku.display_name}…`
+            : mode === "pay_as_you_go"
+              ? "GPU rental starting…"
+              : "Redirecting to checkout…",
+        error: "Couldn't start the rental",
+      }
     );
   }
 
@@ -302,6 +320,54 @@ export function CataloguePanel({
             )}
           </div>
 
+          {/* Quantity — rent several identical GPUs in one order */}
+          <div>
+            <div className="mb-2 flex items-center gap-1.5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">GPUs</p>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" className="text-muted-foreground hover:text-foreground">
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  Rent several identical GPUs in one order — every GPU gets the same storage, region and rate, and can
+                  share the same workspace and SSH key.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 p-1">
+              <button
+                type="button"
+                onClick={() => setQuantity(Math.max(1, gpuCount - 1))}
+                disabled={gpuCount <= 1}
+                className="rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 hover:bg-card"
+                aria-label="Fewer GPUs"
+              >
+                −
+              </button>
+              <span className="min-w-28 px-2 text-center text-sm font-medium">
+                {gpuCount} × {sku.display_name}
+              </span>
+              <button
+                type="button"
+                onClick={() => setQuantity(Math.min(maxQuantity, gpuCount + 1))}
+                disabled={gpuCount >= maxQuantity}
+                className="rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 hover:bg-card"
+                aria-label="More GPUs"
+              >
+                +
+              </button>
+            </div>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Up to {maxQuantity} identical GPU{maxQuantity === 1 ? "" : "s"} per order on your plan
+              {remainingSlots > 0 && gpuCount < 10
+                ? ` — ${remainingSlots} concurrent rental slot${remainingSlots === 1 ? "" : "s"} free`
+                : ""}
+              . Each GPU is billed at the same rate.
+            </p>
+          </div>
+
           {/* SSH key + workspace */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -348,7 +414,8 @@ export function CataloguePanel({
                 ))}
               </select>
               <p className="mt-1.5 text-[11px] text-muted-foreground">
-                A workspace keeps its storage and SSH identity between rentals. Manage them on the Workspaces page.
+                A workspace keeps its storage and SSH identity between rentals. Every GPU in the order attaches to it.
+                Manage them on the Workspaces tab.
               </p>
             </div>
           </div>
@@ -417,9 +484,13 @@ export function CataloguePanel({
                     <span className="font-mono-data">{formatGbp(price!.storageAddOnMicros)}/hr</span>
                   </div>
                 )}
+                <div className="mt-2 flex justify-between text-sm">
+                  <span className="text-muted-foreground">Quantity</span>
+                  <span className="font-mono-data">× {gpuCount} GPU{gpuCount === 1 ? "" : "s"}</span>
+                </div>
                 <div className="mt-2 flex justify-between border-t border-border pt-2 text-sm font-medium">
                   <span>Total</span>
-                  <span className="font-mono-data">{formatGbp(price!.totalHourlyMicros)}/hour</span>
+                  <span className="font-mono-data">{formatGbp(hourlyTotal)}/hour</span>
                 </div>
                 {hoursLeft !== null && (
                   <p className="mt-2 text-xs text-muted-foreground">
@@ -434,6 +505,7 @@ export function CataloguePanel({
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">
                     {formatGbp(price!.totalHourlyMicros)}/hr × {duration === "day" ? "24 hours" : "168 hours"}
+                    {gpuCount > 1 ? ` × ${gpuCount} GPUs` : ""}
                   </span>
                   <span className="font-mono-data">{formatGbp(bookingTotal)}</span>
                 </div>
@@ -459,7 +531,9 @@ export function CataloguePanel({
             disabled={!!launchBlockedReason}
             onClick={handleSubmit}
           >
-            {mode === "pay_as_you_go" ? `Rent now · ${formatGbp(price!.totalHourlyMicros)}/hr` : `Book & pay ${formatGbp(bookingTotal)}`}
+            {mode === "pay_as_you_go"
+              ? `Rent ${gpuCount > 1 ? `${gpuCount} × ` : ""}${sku.display_name} · ${formatGbp(hourlyTotal)}/hr`
+              : `Book ${gpuCount > 1 ? `${gpuCount} × ` : ""}${sku.display_name} · pay ${formatGbp(bookingTotal)}`}
           </Button>
           {!sku.enabled && (
             <p className="text-xs text-muted-foreground">

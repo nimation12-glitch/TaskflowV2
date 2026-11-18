@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
 
@@ -33,6 +33,9 @@ class CreateRentalRequest(BaseModel):
     # Spec §13: customers pick a GPU, not a region — but may hint at one.
     # "automatic" (default) lets the scheduler choose freely.
     location_preference: Literal["automatic", "uk", "europe", "north_america", "asia"] = "automatic"
+    # Multi-GPU: rent N identical copies of this SKU in one order (1..10).
+    # Plan concurrency limits are re-checked server-side against the whole N.
+    quantity: int = Field(default=1, ge=1, le=10)
 
 
 def _serialize(instance: GpuInstance, db: Session) -> dict:
@@ -107,6 +110,7 @@ def create_rental(
             booking_duration=booking_duration,
             workspace_id=workspace_uuid,
             location_preference=body.location_preference,
+            quantity=body.quantity,
         )
         db.commit()
     except (
@@ -119,16 +123,16 @@ def create_rental(
     except gpu_rental_service.StorageLimitExceededError as exc:
         db.rollback()
         raise HTTPException(400, str(exc))
+    except gpu_rental_service.InvalidQuantityError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc))
     except gpu_rental_service.BookingDurationExceededError as exc:
         db.rollback()
         raise HTTPException(400, str(exc))
     except gpu_rental_service.BookingNotAllowedError as exc:
         db.rollback()
         raise HTTPException(403, str(exc))
-    except (
-        gpu_rental_service.ConcurrentRentalLimitError,
-        gpu_rental_service.WorkspaceOccupiedError,
-    ) as exc:
+    except gpu_rental_service.ConcurrentRentalLimitError as exc:
         db.rollback()
         raise HTTPException(409, str(exc))
     except gpu_rental_service.InsufficientWalletBalanceError as exc:

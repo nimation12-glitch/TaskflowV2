@@ -17,7 +17,7 @@ import {
   resizeWorkspaceAction,
   buyPrepaidAction,
   attachWorkspaceSshKeyAction,
-} from "./actions";
+} from "./workspaces-actions";
 import type { PlanCode } from "@/lib/compute-types";
 import type { SshKey } from "@/lib/compute-types";
 import type { StorageCatalogueSize, Workspace, WorkspaceSlots } from "@/lib/workspaces-client";
@@ -27,7 +27,7 @@ const BILLING_LABEL: Record<Workspace["billing_mode"], string> = {
   PREPAID_30D: "Prepaid 30 days",
 };
 
-export function WorkspacesClient({
+export function WorkspacesSection({
   workspaces,
   slots,
   storageSizes,

@@ -415,25 +415,27 @@ def test_rental_attaches_to_workspace_and_inherits_ssh_key(db_session, pro_org, 
     assert result.instance.workspace_id == w.id
     assert result.instance.ssh_key_id == ssh_key.id
 
-    # A second active rental on the same workspace is refused (spec §22).
+    # Multiple active rentals may share one workspace — a workspace is
+    # persistent storage + SSH identity, not a lock (multi-GPU orders).
     with patch("app.compute.aws_provider.launch_instance") as launch, patch(
         "app.compute.aws_provider.import_ssh_key"
     ) as import_key:
         launch.return_value = ("i-124", "pending", "eu-west-2a")
         import_key.return_value = f"taskflow-{uuid.uuid4().hex[:8]}"
-        with pytest.raises(gpu_rentals.WorkspaceOccupiedError):
-            gpu_rentals.create_rental(
-                db_session,
-                organization_id=pro_org.id,
-                user_id=uuid.uuid4(),
-                org=None,
-                gpu_type_slug="standard",
-                storage_gb=50,
-                ssh_key_id=None,
-                payment_mode=PaymentMode.PAY_AS_YOU_GO,
-                booking_duration=None,
-                workspace_id=w.id,
-            )
+        result2 = gpu_rentals.create_rental(
+            db_session,
+            organization_id=pro_org.id,
+            user_id=uuid.uuid4(),
+            org=None,
+            gpu_type_slug="standard",
+            storage_gb=50,
+            ssh_key_id=None,
+            payment_mode=PaymentMode.PAY_AS_YOU_GO,
+            booking_duration=None,
+            workspace_id=w.id,
+        )
+    assert result2.instance.workspace_id == w.id
+    assert result2.instance.id != result.instance.id
 
     # A workspace-less rental still requires an explicit SSH key.
     with pytest.raises(gpu_rentals.SshKeyNotFoundError):

@@ -1,11 +1,12 @@
 import { backendJson } from "@/lib/backend-client";
 import { getGpuTypes, getWallet, getRentals } from "@/lib/compute-client";
-import { getWorkspaces } from "@/lib/workspaces-client";
+import { getWorkspaces, getStorageCatalogue } from "@/lib/workspaces-client";
 import { getSshKeys } from "@/lib/ssh-keys-client";
 import { WalletWidget } from "@/components/dashboard/wallet-widget";
 import { CataloguePanel } from "./catalogue-panel";
 import { RentalsList } from "./rentals-list";
 import { SshKeysSection } from "./ssh-keys-section";
+import { WorkspacesSection } from "./workspaces-section";
 import { UnavailableNotice } from "@/components/ui/unavailable-notice";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { safe } from "@/lib/safe-fetch";
@@ -13,14 +14,21 @@ import type { PlanCode } from "@/lib/compute-types";
 
 type OrgSummary = { plan: { code: PlanCode } | null };
 
-export default async function ComputePage() {
+export default async function ComputePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }> | { tab?: string };
+}) {
+  const { tab } = await searchParams;
+  const defaultTab = tab === "workspaces" || tab === "ssh-keys" ? tab : "catalogue";
   const orgResult = await safe(backendJson<OrgSummary>("/organizations/me"), { plan: null });
-  const [gpuTypesResult, walletResult, rentalsResult, sshKeysResult, workspacesResult] = await Promise.all([
+  const [gpuTypesResult, walletResult, rentalsResult, sshKeysResult, workspacesResult, storageResult] = await Promise.all([
     safe(getGpuTypes(), []),
     safe(getWallet(), { balance_micros: 0, estimated_hours_remaining_at_current_rate: null }),
     safe(getRentals(), []),
     safe(getSshKeys(), []),
     safe(getWorkspaces(), { workspaces: [], slots: { used: 0, included: 0 } }),
+    safe(getStorageCatalogue(), { sizes: [] }),
   ]);
 
   const plan: PlanCode = orgResult.data.plan?.code ?? "FREE";
@@ -28,9 +36,11 @@ export default async function ComputePage() {
   const wallet = walletResult.data;
   const rentals = rentalsResult.data;
   const sshKeys = sshKeysResult.data;
-  const { workspaces } = workspacesResult.data;
+  const { workspaces, slots } = workspacesResult.data;
+  const storageSizes = storageResult.ok ? storageResult.data.sizes : [];
 
-  const anyUnavailable = !gpuTypesResult.ok || !walletResult.ok || !rentalsResult.ok || !sshKeysResult.ok;
+  const anyUnavailable =
+    !gpuTypesResult.ok || !walletResult.ok || !rentalsResult.ok || !sshKeysResult.ok || !workspacesResult.ok;
 
   const activeRentalKeyIds = rentals
     .filter((r) => ["PROVISIONING", "RUNNING", "STOPPED", "STOPPING", "PENDING_PAYMENT"].includes(r.status))
@@ -49,8 +59,9 @@ export default async function ComputePage() {
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">Compute</h1>
       <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-        Dedicated GPUs, rented by the hour from your wallet or booked for a fixed period. You pick the GPU — we
-        automatically pick the best region for it.
+        Dedicated GPUs rented by the hour from your wallet or booked for a fixed period, persistent workspaces to keep
+        your storage and SSH identity between rentals, and the full catalogue below. You pick the GPU — we pick the best
+        region for it.
       </p>
 
       {anyUnavailable && (
@@ -59,9 +70,12 @@ export default async function ComputePage() {
         </div>
       )}
 
-      <Tabs defaultValue="catalogue" className="mt-6">
+      <Tabs defaultValue={defaultTab} className="mt-6">
         <TabsList>
           <TabsTrigger value="catalogue">Catalogue</TabsTrigger>
+          <TabsTrigger value="workspaces">
+            Workspaces {workspaces.length > 0 && `(${workspaces.length})`}
+          </TabsTrigger>
           <TabsTrigger value="ssh-keys">SSH keys {sshKeys.length > 0 && `(${sshKeys.length})`}</TabsTrigger>
         </TabsList>
 
@@ -83,6 +97,10 @@ export default async function ComputePage() {
               workspaceNames={Object.fromEntries(workspaceSummaries.map((w) => [w.id, w.name]))}
             />
           </div>
+        </TabsContent>
+
+        <TabsContent value="workspaces" className="mt-6">
+          <WorkspacesSection workspaces={workspaces} slots={slots} storageSizes={storageSizes} sshKeys={sshKeys} plan={plan} />
         </TabsContent>
 
         <TabsContent value="ssh-keys" className="mt-6">

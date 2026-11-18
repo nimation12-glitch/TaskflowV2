@@ -46,7 +46,11 @@ def bootstrap_organization_for_new_user(db: Session, user_id: uuid.UUID, display
             status=SubscriptionStatus.ACTIVE,
         )
     )
-    db.add(CreditAccount(organization_id=org.id, balance_micros=free_plan.monthly_credit_micros))
+    # Plans buy ACCESS (spec §3) — no welcome credit is ever granted at
+    # signup. The wallet starts at zero and is funded by top-ups only.
+    # (free_plan.monthly_credit_micros stays 0, but this must not silently
+    # start granting credit if that value were ever changed.)
+    db.add(CreditAccount(organization_id=org.id, balance_micros=0))
 
     db.flush()
     db.commit()
