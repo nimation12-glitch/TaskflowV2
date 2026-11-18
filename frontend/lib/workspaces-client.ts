@@ -26,6 +26,8 @@ export type Workspace = {
   total_charged_micros: number;
   payment_overdue: boolean;
   active_gpu_instance_id: string | null;
+  /** How many active GPUs are attached (multi-GPU orders share a workspace). */
+  active_gpu_count: number;
 };
 
 export type WorkspaceSlots = { used: number; included: number };

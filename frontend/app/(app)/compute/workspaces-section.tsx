@@ -246,7 +246,7 @@ function WorkspaceCard({
           {hasActiveRental && (
             <Badge variant="success">
               <Cpu className="h-3 w-3" />
-              GPU attached
+              {ws.active_gpu_count > 1 ? `${ws.active_gpu_count} GPUs attached` : "GPU attached"}
             </Badge>
           )}
         </div>
@@ -389,7 +389,7 @@ function WorkspaceCard({
               </Button>
             }
             title="Delete this workspace?"
-            description="Storage and its SSH attachment are removed permanently. A GPU rental attached to this workspace must be released first."
+            description="Storage and its SSH attachment are removed permanently. GPU rentals attached to this workspace must be released first."
             confirmLabel="Delete workspace"
             variant="danger"
             pending={pending}

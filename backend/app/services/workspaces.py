@@ -346,12 +346,12 @@ def serialize_workspace(db: Session, ws: Workspace, plan: Plan) -> dict:
     if ws.ssh_key_id is not None:
         ssh_key = ssh_key_service.get_org_ssh_key(db, ws.organization_id, ws.ssh_key_id)
 
-    active_rental_id = db.execute(
+    active_rentals = db.execute(
         select(GpuInstance.id).where(
             GpuInstance.workspace_id == ws.id,
             GpuInstance.status.in_(_ACTIVE_RENTAL_STATUSES),
         )
-    ).scalars().first()
+    ).scalars().all()
 
     return {
         "id": str(ws.id),
@@ -370,5 +370,8 @@ def serialize_workspace(db: Session, ws: Workspace, plan: Plan) -> dict:
         "deleted_at": ws.deleted_at.isoformat() if ws.deleted_at else None,
         "total_charged_micros": ws.total_charged_micros,
         "payment_overdue": ws.payment_overdue_at is not None,
-        "active_gpu_instance_id": str(active_rental_id) if active_rental_id else None,
+        # A workspace may host several active rentals (multi-GPU orders share
+        # one workspace) — id kept for legacy callers, count for the UI.
+        "active_gpu_instance_id": str(active_rentals[0]) if active_rentals else None,
+        "active_gpu_count": len(active_rentals),
     }
