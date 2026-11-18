@@ -105,6 +105,12 @@ def test_gpu_catalogue_includes_disabled_skus_and_region_premiums(db_session, or
     assert "aws_cost_est_micros_per_hour" not in str(sku)
     # §14: every offered region carries a startup estimate.
     assert all(r["startup_estimate_seconds"] > 0 for r in sku["regions"]["offered"])
+    # Machine image info (§15): the Deep Learning AMI identity per region.
+    assert sku["image"]["name"].startswith("AWS Deep Learning AMI")
+    assert sku["image"]["ssm_parameter"].startswith("/aws/service/deeplearning/")
+    us_entry = next(r for r in sku["regions"]["offered"] if r["code"] == "us-east-1")
+    assert us_entry["name"] == "US East (N. Virginia)"
+    assert us_entry["ami_id"] is None  # not resolved yet — resolved via SSM at launch
     assert datetime.now(timezone.utc) is not None  # sanity: imports used
 
 
@@ -122,6 +128,30 @@ def test_ssh_key_create_list_delete_over_http(db_session, organization, ssh_publ
 
     res = client.delete(f"/account/ssh-keys/{key_id}", headers=headers)
     assert res.status_code == 200
+
+
+def test_generate_ssh_key_over_http_returns_private_key_once(db_session, organization):
+    client = _client_for(db_session)
+    headers = _auth_header(organization.id)
+
+    res = client.post("/account/ssh-keys/generate", json={"label": "workspace key"}, headers=headers)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["label"] == "workspace key"
+    assert body["public_key"].startswith("ssh-ed25519 ")
+    assert "BEGIN OPENSSH PRIVATE KEY" in body["private_key"]
+    assert body["fingerprint"].startswith("SHA256:")
+
+    # The private key is one-time material: the list endpoint never serves it.
+    res = client.get("/account/ssh-keys", headers=headers)
+    listed = res.json()["ssh_keys"]
+    assert len(listed) == 1
+    assert "private_key" not in listed[0]
+    assert "public_key" not in listed[0]
+
+    # And no other endpoint hands it back either.
+    res = client.get(f"/account/ssh-keys/{body['id']}")
+    assert res.status_code in (404, 405)  # no fetch-by-id route exists
 
 
 def test_rejects_missing_auth(db_session, organization):

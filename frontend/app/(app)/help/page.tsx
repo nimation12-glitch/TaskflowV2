@@ -12,7 +12,7 @@ const TOPICS = [
 const FAQ = [
   {
     q: "How do I connect to a running rental?",
-    a: "Once a rental's status is Running, its card on the Compute page shows an SSH command you can copy directly — you'll need an SSH key added first, from the SSH keys tab on that same page.",
+    a: "Once a rental's status is Running, its card on the Compute page shows an SSH command you can copy directly — you'll need an SSH key first. Keys are created with workspaces: open the Workspaces tab on the Compute page, create one, and the wizard generates (or lets you attach) the key.",
   },
   {
     q: "What happens if my wallet runs out mid-rental?",

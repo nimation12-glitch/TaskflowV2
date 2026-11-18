@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.internal import RequestContext, require_context
 from app.auth.maintenance import block_if_maintenance_unless_admin
+from app.compute.ami_resolver import AMI_DISPLAY_NAME, AMI_SSM_PATH
 from app.database import get_db
 from app.models.compute import GpuType
 from app.models.region import GpuRegionAvailability, GpuRegionStatus, Region, RegionStatus
@@ -54,8 +55,13 @@ def list_gpu_types(
         offered_by_sku.setdefault(str(row.gpu_type_id), []).append(
             {
                 "code": region.aws_region_code,
+                "name": region.public_name,
                 "area": region.country_or_area,
                 "premium_micros": row.premium_micros,
+                # Cached regional AMI (resolved via SSM at launch, §15) — null
+                # until the first resolution. The catalogue shows it so users
+                # can see exactly which machine image boots in each region.
+                "ami_id": row.ami_id,
             }
         )
 
@@ -80,6 +86,12 @@ def list_gpu_types(
             "effective_price_micros_per_hour": gpu_rental_service.discounted_base_rate_micros(gt, plan),
             "minimum_rental_hours": gt.minimum_rental_hours,
             "booking_allowed": plan.gpu_booking_allowed,
+            # The machine image every launch boots (§15): one Deep Learning
+            # AMI per region, resolved through SSM and cached per region.
+            "image": {
+                "name": AMI_DISPLAY_NAME,
+                "ssm_parameter": AMI_SSM_PATH,
+            },
             "regions": {
                 "offered": offered,
                 "not_offered": not_offered_by_sku.get(str(gt.id), []),

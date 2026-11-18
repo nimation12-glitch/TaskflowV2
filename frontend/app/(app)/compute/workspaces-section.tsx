@@ -1,23 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { HardDrive, Plus, KeyRound, AlertTriangle, Cpu, Trash2, CalendarClock, FolderOpen } from "lucide-react";
-import { Button } from "@/components/ui/button";import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { HardDrive, KeyRound, AlertTriangle, Cpu, Trash2, CalendarClock, FolderOpen } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useAction } from "@/lib/hooks/use-action";
 import { formatGbp, formatDateTime } from "@/lib/utils";
 import {
-  createWorkspaceAction,
   deleteWorkspaceAction,
   resizeWorkspaceAction,
   buyPrepaidAction,
   attachWorkspaceSshKeyAction,
 } from "./workspaces-actions";
+import { WorkspaceWizard } from "./workspace-wizard";
 import type { PlanCode } from "@/lib/compute-types";
 import type { SshKey } from "@/lib/compute-types";
 import type { StorageCatalogueSize, Workspace, WorkspaceSlots } from "@/lib/workspaces-client";
@@ -49,7 +48,7 @@ export function WorkspacesSection({
         <p className="text-sm text-muted-foreground">
           {slots.used} of {slots.included} workspace slot{slots.included === 1 ? "" : "s"} used ({plan} plan)
         </p>
-        <CreateWorkspaceDialog storageSizes={storageSizes} sshKeys={sshKeys} disabled={atSlotLimit || pending} />
+        <WorkspaceWizard storageSizes={storageSizes} sshKeys={sshKeys} disabled={atSlotLimit || pending} />
       </div>
 
       {atSlotLimit && (
@@ -64,6 +63,14 @@ export function WorkspacesSection({
           icon={FolderOpen}
           title="No workspaces yet"
           description="Create a workspace to get persistent storage and an SSH identity that survive between GPU rentals."
+          action={
+            <WorkspaceWizard
+              storageSizes={storageSizes}
+              sshKeys={sshKeys}
+              disabled={atSlotLimit}
+              trigger={<Button>Create your first workspace</Button>}
+            />
+          }
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -73,141 +80,6 @@ export function WorkspacesSection({
         </div>
       )}
     </div>
-  );
-}
-
-function CreateWorkspaceDialog({
-  storageSizes,
-  sshKeys,
-  disabled,
-}: {
-  storageSizes: StorageCatalogueSize[];
-  sshKeys: SshKey[];
-  disabled?: boolean;
-}) {
-  const { pending, run } = useAction();
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const firstSize = storageSizes[0];
-  const [sizeGb, setSizeGb] = useState(firstSize?.size_gb ?? 0);
-  const [billing, setBilling] = useState<"hourly" | "prepaid_30d">("hourly");
-  const [sshKeyId, setSshKeyId] = useState("");
-
-  const selectedSize = storageSizes.find((s) => s.size_gb === sizeGb);
-  const prepaidAvailable = billing === "prepaid_30d" && !!selectedSize?.prepaid_price_micros;
-  const canSubmit = name.trim().length > 0 && sizeGb > 0 && !disabled;
-
-  function handleSubmit() {
-    if (!canSubmit) return;
-    run(
-      () =>
-        createWorkspaceAction({
-          name: name.trim(),
-          storage_size_gb: sizeGb,
-          billing_mode: billing,
-          ...(sshKeyId ? { ssh_key_id: sshKeyId } : {}),
-        }),
-      { success: `Workspace "${name.trim()}" created`, error: "Couldn't create the workspace", onSuccess: () => setOpen(false) }
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button disabled={disabled}>
-          <Plus className="h-4 w-4" />
-          New workspace
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Create a workspace</DialogTitle>
-          <DialogDescription>
-            Persistent storage + SSH identity that outlive GPU rentals. The size matching your plan is included and
-            never billed.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div>
-            <Label htmlFor="ws-name">Name</Label>
-            <Input id="ws-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. training-data" maxLength={60} />
-          </div>
-          <div>
-            <Label>Storage</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {storageSizes.map((s) => (
-                <button
-                  key={s.size_gb}
-                  onClick={() => setSizeGb(s.size_gb)}
-                  className={`rounded-md border p-2.5 text-left text-sm transition-colors ${
-                    sizeGb === s.size_gb ? "border-primary bg-primary/10" : "border-border hover:bg-muted/30"
-                  }`}
-                >
-                  <span className="font-medium">{s.display_name}</span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    {s.is_included ? "Included with your plan" : s.hourly_price_micros > 0 ? `${formatGbp(s.hourly_price_micros)}/hr` : "Free"}
-                  </span>
-                </button>
-              ))}
-              {storageSizes.length === 0 && (
-                <p className="text-xs text-muted-foreground">No storage sizes are currently available for your plan.</p>
-              )}
-            </div>
-          </div>
-          {selectedSize && !selectedSize.is_included && (
-            <div>
-              <Label>Billing</Label>
-              <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 p-1">
-                <button
-                  onClick={() => setBilling("hourly")}
-                  className={`rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${
-                    billing === "hourly" ? "bg-card panel-edge text-foreground" : "text-muted-foreground"
-                  }`}
-                >
-                  Hourly
-                </button>
-                {selectedSize.prepaid_price_micros !== null && (
-                  <button
-                    onClick={() => setBilling("prepaid_30d")}
-                    className={`rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${
-                      billing === "prepaid_30d" ? "bg-card panel-edge text-foreground" : "text-muted-foreground"
-                    }`}
-                  >
-                    Prepaid 30d · {formatGbp(selectedSize.prepaid_price_micros)}
-                  </button>
-                )}
-              </div>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                {billing === "hourly"
-                  ? "Billed hourly from your wallet while the workspace exists — GPU running or not."
-                  : "One-off 30-day commitment from your wallet; reverts to hourly at expiry. Data is never deleted at expiry."}
-              </p>
-            </div>
-          )}
-          <div>
-            <Label htmlFor="ws-ssh">SSH key (optional)</Label>
-            <select
-              id="ws-ssh"
-              value={sshKeyId}
-              onChange={(e) => setSshKeyId(e.target.value)}
-              className="mt-1 h-10 w-full rounded-md border border-border bg-muted/40 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="">None — add later</option>
-              {sshKeys.map((k) => (
-                <option key={k.id} value={k.id}>
-                  {k.label} ({k.fingerprint})
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button onClick={handleSubmit} loading={pending} disabled={!canSubmit}>
-            Create workspace
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

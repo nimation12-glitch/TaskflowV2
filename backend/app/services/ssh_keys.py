@@ -87,6 +87,48 @@ def compute_fingerprint(raw: str) -> str:
     return f"SHA256:{b64_digest}"
 
 
+def generate_ssh_keypair() -> tuple[str, str]:
+    """
+    Generates a fresh ed25519 keypair server-side. Returns
+    (private_key, public_key) in OpenSSH formats.
+
+    The private key is handed back to the caller exactly once (the UI prompts
+    a download) and is NEVER stored — only the public key reaches the DB via
+    create_ssh_key(). There is no endpoint that can reveal it again.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+        PublicFormat,
+    )
+
+    private = ed25519.Ed25519PrivateKey.generate()
+    private_pem = private.private_bytes(
+        encoding=Encoding.PEM,
+        format=PrivateFormat.OpenSSH,
+        encryption_algorithm=NoEncryption(),
+    ).decode("ascii")
+    public = private.public_key().public_bytes(
+        encoding=Encoding.OpenSSH,
+        format=PublicFormat.OpenSSH,
+    ).decode("ascii")
+    return private_pem, public
+
+
+def create_generated_ssh_key(
+    db: Session, organization_id: uuid.UUID, created_by_user_id: uuid.UUID, label: str
+) -> tuple[SshKey, str]:
+    """
+    generate_ssh_keypair() + create_ssh_key() in one call: persists only the
+    public half and returns (row, private_key) for a one-time download.
+    """
+    private_key, public_key = generate_ssh_keypair()
+    row = create_ssh_key(db, organization_id, created_by_user_id, label, public_key)
+    return row, private_key
+
+
 def list_ssh_keys(db: Session, organization_id: uuid.UUID) -> list[SshKey]:
     return list(
         db.execute(

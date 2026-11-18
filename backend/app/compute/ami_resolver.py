@@ -31,6 +31,10 @@ AMI_SSM_PATH = (
     "oss-nvidia-driver-gpu-pytorch-2.13-amazon-linux-2023/latest/ami-id"
 )
 
+# Human-readable name for the catalogue's machine-image panel — kept next to
+# the SSM path so the two can never drift apart.
+AMI_DISPLAY_NAME = "AWS Deep Learning AMI · PyTorch 2.13 · Amazon Linux 2023 (x86_64)"
+
 # How long a cached AMI id stays trusted before the next launch re-resolves it.
 AMI_CACHE_TTL = timedelta(hours=24)
 

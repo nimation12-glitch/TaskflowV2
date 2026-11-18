@@ -5,7 +5,6 @@ import { getSshKeys } from "@/lib/ssh-keys-client";
 import { WalletWidget } from "@/components/dashboard/wallet-widget";
 import { CataloguePanel } from "./catalogue-panel";
 import { RentalsList } from "./rentals-list";
-import { SshKeysSection } from "./ssh-keys-section";
 import { WorkspacesSection } from "./workspaces-section";
 import { UnavailableNotice } from "@/components/ui/unavailable-notice";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -20,7 +19,7 @@ export default async function ComputePage({
   searchParams: Promise<{ tab?: string }> | { tab?: string };
 }) {
   const { tab } = await searchParams;
-  const defaultTab = tab === "workspaces" || tab === "ssh-keys" ? tab : "catalogue";
+  const defaultTab = tab === "workspaces" ? tab : "catalogue";
   const orgResult = await safe(backendJson<OrgSummary>("/organizations/me"), { plan: null });
   const [gpuTypesResult, walletResult, rentalsResult, sshKeysResult, workspacesResult, storageResult] = await Promise.all([
     safe(getGpuTypes(), []),
@@ -41,10 +40,6 @@ export default async function ComputePage({
 
   const anyUnavailable =
     !gpuTypesResult.ok || !walletResult.ok || !rentalsResult.ok || !sshKeysResult.ok || !workspacesResult.ok;
-
-  const activeRentalKeyIds = rentals
-    .filter((r) => ["PROVISIONING", "RUNNING", "STOPPED", "STOPPING", "PENDING_PAYMENT"].includes(r.status))
-    .map((r) => r.ssh_key_id);
 
   const concurrentUsed = rentals.filter((r) =>
     ["PENDING_PAYMENT", "PROVISIONING", "RUNNING", "STOPPED", "STOPPING"].includes(r.status)
@@ -76,7 +71,6 @@ export default async function ComputePage({
           <TabsTrigger value="workspaces">
             Workspaces {workspaces.length > 0 && `(${workspaces.length})`}
           </TabsTrigger>
-          <TabsTrigger value="ssh-keys">SSH keys {sshKeys.length > 0 && `(${sshKeys.length})`}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="catalogue" className="mt-6 space-y-6">
@@ -101,10 +95,6 @@ export default async function ComputePage({
 
         <TabsContent value="workspaces" className="mt-6">
           <WorkspacesSection workspaces={workspaces} slots={slots} storageSizes={storageSizes} sshKeys={sshKeys} plan={plan} />
-        </TabsContent>
-
-        <TabsContent value="ssh-keys" className="mt-6">
-          <SshKeysSection keys={sshKeys} activeRentalKeyIds={activeRentalKeyIds} />
         </TabsContent>
       </Tabs>
     </div>

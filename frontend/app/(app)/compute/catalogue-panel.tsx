@@ -28,6 +28,7 @@ import {
   type SshKey,
 } from "@/lib/compute-types";
 import { createRentalAction } from "./actions";
+import { GpuDetailDialog } from "./gpu-detail-dialog";
 
 type WorkspaceSummary = { id: string; name: string; storage_size_gb: number; ssh_key_id: string | null; ssh_key_label: string | null };
 
@@ -49,6 +50,7 @@ export function CataloguePanel({
   const limits = PLAN_LIMITS[plan];
   const enabledSku = gpuTypes.find((t) => t.enabled);
   const [skuSlug, setSkuSlug] = useState(gpuTypes[0]?.slug);
+  const [detailSlug, setDetailSlug] = useState<string | null>(null);
   const [storageGb, setStorageGb] = useState(50);
   const [location, setLocation] = useState<LocationPreference>("automatic");
   const [sshKeyId, setSshKeyId] = useState(""); // "" = inherit the attached workspace's key
@@ -59,6 +61,7 @@ export function CataloguePanel({
   const { pending, run } = useAction();
 
   const sku = gpuTypes.find((t) => t.slug === skuSlug) ?? gpuTypes[0];
+  const detailSku = detailSlug ? (gpuTypes.find((t) => t.slug === detailSlug) ?? null) : null;
 
   // Group the catalogue by GPU family (e.g. NVIDIA T4), cheapest first.
   const families = useMemo(() => {
@@ -114,7 +117,7 @@ export function CataloguePanel({
         : bookingBlocked
           ? "Upgrade to Pro to book a GPU for a fixed period."
           : noSshOption
-            ? "Add an SSH key (or attach a workspace that has one) to launch."
+            ? "Create a workspace with an SSH key to launch (keys are born with workspaces now)."
             : atConcurrentLimit
               ? "You're at your plan's concurrent rental limit."
               : insufficientBalance
@@ -170,7 +173,7 @@ export function CataloguePanel({
           </CardTitle>
           <CardDescription>
             {concurrentUsed}/{limits.concurrentRentals} concurrent rentals used · {limits.queuePriority} queue priority ·
-            fixed list prices, billed from your wallet
+            fixed list prices, billed from your wallet · click a GPU for configurations, region prices & images
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -185,7 +188,7 @@ export function CataloguePanel({
                   return (
                     <button
                       key={t.slug}
-                      onClick={() => setSkuSlug(t.slug)}
+                      onClick={() => setDetailSlug(t.slug)}
                       className={`rounded-md border p-3 text-left transition-colors ${
                         selected ? "border-primary bg-primary/10" : "border-border hover:bg-muted/30"
                       } ${!t.enabled ? "opacity-70" : ""}`}
@@ -208,6 +211,11 @@ export function CataloguePanel({
                         {formatGbp(fromPrice)}/hr
                         <span className="ml-1 text-[11px] font-normal text-muted-foreground">from</span>
                       </p>
+                      <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <Globe className="h-3 w-3" />
+                        {t.regions.offered.length} region{t.regions.offered.length === 1 ? "" : "s"} · configs & prices
+                        {selected && <span className="text-primary">· selected</span>}
+                      </p>
                     </button>
                   );
                 })}
@@ -215,8 +223,8 @@ export function CataloguePanel({
             </div>
           ))}
           <p className="text-xs text-muted-foreground">
-            Prices are the fixed base rate at the cheapest available region; the exact regional premium is shown below
-            before you pay.
+            Prices are the fixed base rate at the cheapest available region — open a GPU to see its configurations,
+            price in every region, and the machine image each region boots.
           </p>
         </CardContent>
       </Card>
@@ -376,11 +384,11 @@ export function CataloguePanel({
                 <div className="flex items-center justify-between rounded-md border border-dashed border-border p-3 text-sm">
                   <span className="flex items-center gap-2 text-muted-foreground">
                     <KeyRound className="h-4 w-4" />
-                    No SSH keys saved yet
+                    No SSH keys yet — they&apos;re created with a workspace
                   </span>
-                  <Link href="/account">
+                  <Link href="/compute?tab=workspaces">
                     <Button size="sm" variant="secondary">
-                      Add one
+                      Create workspace
                     </Button>
                   </Link>
                 </div>
@@ -543,6 +551,24 @@ export function CataloguePanel({
           )}
         </CardContent>
       </Card>
+
+      {/* GPU detail: configurations, price per region, machine image */}
+      {detailSku && (
+        <GpuDetailDialog
+          sku={detailSku}
+          plan={plan}
+          familySkus={gpuTypes.filter((t) => t.gpu === detailSku.gpu)}
+          open
+          onOpenChange={(next) => {
+            if (!next) setDetailSlug(null);
+          }}
+          onSelect={(slug) => setDetailSlug(slug)}
+          onConfirm={() => {
+            setSkuSlug(detailSku.slug);
+            setDetailSlug(null);
+          }}
+        />
+      )}
     </div>
   );
 }

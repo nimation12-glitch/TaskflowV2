@@ -20,6 +20,10 @@ class CreateSshKeyRequest(BaseModel):
     public_key: str = Field(min_length=1, max_length=4096)
 
 
+class GenerateSshKeyRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+
+
 def _serialize(key) -> dict:
     # Never return the full public key blob back out unnecessarily — the
     # fingerprint is enough for the user to confirm which key is which.
@@ -53,6 +57,34 @@ def create_ssh_key(
         db.rollback()
         raise HTTPException(400, str(exc))
     return _serialize(key)
+
+
+@router.post("/generate")
+def generate_ssh_key(
+    body: GenerateSshKeyRequest,
+    ctx: RequestContext = Depends(require_context),
+    db: Session = Depends(get_db),
+):
+    """
+    Creates an ed25519 keypair server-side and returns it ONCE. The private
+    key exists only in this response — it is never stored, logged, or
+    retrievable later, so the client must offer a download immediately.
+    Used by the workspace-creation flow (the old standalone SSH keys tab is
+    gone; keys are born with a workspace).
+    """
+    try:
+        key, private_key = ssh_key_service.create_generated_ssh_key(
+            db, ctx.organization_id, ctx.user_id, body.label
+        )
+        db.commit()
+    except ssh_key_service.InvalidPublicKeyError as exc:  # defensive: generated keys always validate
+        db.rollback()
+        raise HTTPException(400, str(exc))
+    return {
+        **_serialize(key),
+        "public_key": key.public_key,
+        "private_key": private_key,
+    }
 
 
 @router.delete("/{ssh_key_id}")

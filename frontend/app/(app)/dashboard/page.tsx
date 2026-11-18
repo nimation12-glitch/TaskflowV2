@@ -64,10 +64,10 @@ export default async function DashboardOverview({ searchParams }: { searchParams
           <p className="mt-1.5 text-sm capitalize text-muted-foreground">{org.role.toLowerCase()} on this workspace</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href="/compute">
+          <Link href="/compute?tab=workspaces">
             <Button variant="secondary" size="sm">
               <KeyRound className="h-3.5 w-3.5" />
-              Manage SSH keys
+              Workspaces &amp; SSH keys
             </Button>
           </Link>
           <Link href="/billing">

@@ -9,8 +9,8 @@ import {
   attachWorkspaceSshKey,
 } from "@/lib/workspaces-client";
 
-// Workspaces live on the merged /compute page now (Catalogue / Workspaces /
-// SSH keys tabs); every action revalidates that page.
+// Workspaces live on the merged /compute page now (Catalogue / Workspaces
+// tabs); every action revalidates that page.
 
 export async function createWorkspaceAction(input: {
   name: string;

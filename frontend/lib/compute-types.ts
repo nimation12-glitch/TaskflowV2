@@ -3,11 +3,22 @@ export type PlanCode = "FREE" | "PRO" | "ULTRA" | "MAX";
 /** One offered (SKU x region) row of the launch matrix (spec §12/§13). */
 export type SkuRegion = {
   code: string;
+  /** Public region name (e.g. "UK London") as served by the backend. */
+  name?: string;
   area: string;
   /** Regional service premium in micro-GBP/hr — never plan-discounted (§24). */
   premium_micros: number;
   /** §14 estimate: provisioning start -> instance running, in seconds. */
   startup_estimate_seconds: number;
+  /** Cached regional AMI (§15); null until the first SSM resolution. */
+  ami_id?: string | null;
+};
+
+/** The machine image every launch in every region boots (§15). */
+export type MachineImage = {
+  name: string;
+  /** Public SSM parameter the AMI id is resolved from at launch. */
+  ssm_parameter: string;
 };
 
 export type GpuSku = {
@@ -33,6 +44,8 @@ export type GpuSku = {
   minimum_rental_hours: number;
   /** Whether the caller's plan may use booking mode. */
   booking_allowed: boolean;
+  /** Machine image booted on launch (resolved to a regional AMI id per region). */
+  image?: MachineImage;
   regions: {
     offered: SkuRegion[];
     /** Regions the spec marks N/A for this configuration (§12). */

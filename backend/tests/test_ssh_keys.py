@@ -86,3 +86,34 @@ def test_delete_succeeds_once_not_in_use(db_session, organization, ssh_key):
     ssh_key_service.delete_ssh_key(db_session, organization.id, ssh_key.id)
     db_session.commit()
     assert ssh_key_service.get_org_ssh_key(db_session, organization.id, ssh_key.id) is None
+
+
+def test_generated_keypair_is_valid_and_private_key_is_not_a_public_key():
+    private_key, public_key = ssh_key_service.generate_ssh_keypair()
+
+    # Public half is a real OpenSSH public key and carries a SHA256 fingerprint.
+    ssh_key_service.validate_public_key_format(public_key)
+    assert public_key.startswith("ssh-ed25519 ")
+    assert ssh_key_service.compute_fingerprint(public_key).startswith("SHA256:")
+
+    # Private half is an OpenSSH PEM blob — and must never pass as a public key.
+    assert "BEGIN OPENSSH PRIVATE KEY" in private_key
+    with pytest.raises(ssh_key_service.InvalidPublicKeyError, match="private key"):
+        ssh_key_service.validate_public_key_format(private_key)
+
+    # Two calls never produce the same key.
+    assert ssh_key_service.generate_ssh_keypair()[1] != public_key
+
+
+def test_create_generated_ssh_key_persists_only_the_public_half(db_session, organization):
+    key, private_key = ssh_key_service.create_generated_ssh_key(
+        db_session, organization.id, uuid.uuid4(), "wizard key"
+    )
+    db_session.commit()
+
+    stored = ssh_key_service.get_org_ssh_key(db_session, organization.id, key.id)
+    assert stored is not None
+    assert stored.public_key.startswith("ssh-ed25519 ")
+    # The private key exists nowhere but the returned one-time value.
+    assert private_key not in (stored.public_key or "")
+    assert getattr(stored, "private_key", None) is None
