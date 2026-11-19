@@ -233,11 +233,16 @@ def select_region_candidates(
     *,
     location_preference: str = "automatic",
     require_storage: bool = False,
+    ami_name_pattern: Optional[str] = None,
+    ami_ssm_parameter: Optional[str] = None,
 ) -> Optional[list[LaunchCandidate]]:
     """
     Ordered launch candidates (best first), each with its AMI already
     resolved and cached. None = legacy no-matrix path; [] = nothing viable
     (caller should surface "temporarily unavailable", §19).
+
+    ami_name_pattern / ami_ssm_parameter identify the machine IMAGE the
+    workspace boots (image catalogue): None = the platform default image.
     """
     viable = list_viable_rows(
         db, gpu_type, location_preference=location_preference, require_storage=require_storage
@@ -248,7 +253,12 @@ def select_region_candidates(
     candidates: list[LaunchCandidate] = []
     for row, region in viable:
         try:
-            ami = ami_resolver.get_or_resolve_ami(db, row)
+            ami = ami_resolver.get_or_resolve_ami(
+                db,
+                row,
+                name_pattern=ami_name_pattern,
+                ssm_parameter=ami_ssm_parameter,
+            )
         except AmiResolutionError as exc:
             # No compatible environment profile in this region right now
             # (§15: a region is not eligible merely because AWS exposes the

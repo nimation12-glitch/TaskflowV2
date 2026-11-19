@@ -1,6 +1,6 @@
 import "server-only";
 import { backendJson } from "@/lib/backend-client";
-import type { GpuSku, LocationPreference, WalletSummary, Rental } from "@/lib/compute-types";
+import type { GpuSku, ImageCatalogueEntry, LocationPreference, WalletSummary, Rental } from "@/lib/compute-types";
 
 // NOTE: this file assumes the /compute/* backend contract from the spec.
 // Every call is isolated here so response-shape changes only need edits in this file.
@@ -8,6 +8,12 @@ import type { GpuSku, LocationPreference, WalletSummary, Rental } from "@/lib/co
 export async function getGpuTypes() {
   const res = await backendJson<{ gpu_types: GpuSku[] }>("/compute/gpu-types");
   return res.gpu_types;
+}
+
+/** The machine-image catalogue browsed inside the GPU catalogue page. */
+export async function getMachineImages() {
+  const res = await backendJson<{ images: ImageCatalogueEntry[] }>("/compute/images");
+  return res.images;
 }
 
 export function getWallet() {

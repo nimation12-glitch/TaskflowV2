@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.billing import CreditTransactionType, Plan
-from app.models.compute import GpuInstance, GpuInstanceStatus, SshKey
+from app.models.compute import GpuInstance, GpuInstanceStatus, MachineImage, SshKey
 from app.models.workspace import StorageBillingMode, StorageSize, Workspace, WorkspaceStatus
 from app.services import credits as credits_service
 from app.services import ssh_keys as ssh_key_service
@@ -148,6 +148,7 @@ def create_workspace(
     storage_size_gb: int,
     ssh_key_id: Optional[uuid.UUID] = None,
     billing_mode: StorageBillingMode = StorageBillingMode.HOURLY,
+    image_id: Optional[uuid.UUID] = None,
 ) -> Workspace:
     plan = get_plan_for_org(db, organization_id)
 
@@ -177,6 +178,12 @@ def create_workspace(
         if ssh_key is None:
             raise SshKeyNotFoundError("SSH key not found")
 
+    # The machine image rides along with the workspace (image catalogue).
+    # Unknown/disabled slugs are rejected by the API layer; NULL means the
+    # platform default image at launch time.
+    if image_id is not None and db.get(MachineImage, image_id) is None:
+        raise InvalidWorkspaceStateError("Unknown machine image")
+
     hourly_rate_micros = 0 if is_included else size_row.hourly_price_micros
 
     account = credits_service.get_or_create_account(db, organization_id)
@@ -199,6 +206,7 @@ def create_workspace(
         name=name_clean,
         storage_size_gb=size_row.size_gb,
         ssh_key_id=ssh_key.id if ssh_key else None,
+        image_id=image_id,
         billing_mode=mode,
         status=WorkspaceStatus.ACTIVE,
         hourly_rate_micros=hourly_rate_micros,
@@ -346,6 +354,8 @@ def serialize_workspace(db: Session, ws: Workspace, plan: Plan) -> dict:
     if ws.ssh_key_id is not None:
         ssh_key = ssh_key_service.get_org_ssh_key(db, ws.organization_id, ws.ssh_key_id)
 
+    image = db.get(MachineImage, ws.image_id) if ws.image_id is not None else None
+
     active_rentals = db.execute(
         select(GpuInstance.id).where(
             GpuInstance.workspace_id == ws.id,
@@ -365,6 +375,10 @@ def serialize_workspace(db: Session, ws: Workspace, plan: Plan) -> dict:
         "prepaid_expires_at": ws.prepaid_expires_at.isoformat() if ws.prepaid_expires_at else None,
         "ssh_key_id": str(ws.ssh_key_id) if ws.ssh_key_id else None,
         "ssh_key_label": ssh_key.label if ssh_key else None,
+        # Machine image this workspace boots (NULL = platform default).
+        "image_id": str(ws.image_id) if ws.image_id else None,
+        "image_slug": image.slug if image else None,
+        "image_display_name": image.display_name if image else None,
         "status": ws.status.value,
         "created_at": ws.created_at.isoformat(),
         "deleted_at": ws.deleted_at.isoformat() if ws.deleted_at else None,

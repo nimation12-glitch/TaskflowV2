@@ -52,7 +52,16 @@ from app.services import scheduler
 def no_real_aws(monkeypatch):
     """Every test here must be able to run with zero network access."""
     monkeypatch.setattr(
-        ami_resolver, "resolve_ami_from_ssm", lambda region_name: f"ami-{region_name}-resolved"
+        ami_resolver,
+        "resolve_ami_from_ssm",
+        lambda region_name, ssm_parameter=None: f"ami-{region_name}-resolved",
+    )
+    # The DescribeImages fallback must never reach AWS from the test suite
+    # either (it runs whenever SSM is denied/absent in production).
+    monkeypatch.setattr(
+        ami_resolver,
+        "resolve_ami_from_describe_images",
+        lambda region_name, name_pattern=None: f"ami-{region_name}-described",
     )
     monkeypatch.setattr(
         aws_provider, "import_ssh_key", lambda public_key, unique_name, region_name=None: unique_name
@@ -124,8 +133,20 @@ def _create(db, org, gpu_type, ssh_key, *, location="automatic", payment_mode=Pa
 def _launch_stub(calls: list, fail_regions: set | None = None):
     """Records launch kwargs; raises the EC2 capacity error for listed regions."""
 
-    def _launch(gpu_type, storage_gb, key_name, tags, *, region_name=None, ami_id=None, availability_zone=None):
-        calls.append({"region": region_name, "ami": ami_id, "az": availability_zone})
+    def _launch(
+        gpu_type,
+        storage_gb,
+        key_name,
+        tags,
+        *,
+        region_name=None,
+        ami_id=None,
+        availability_zone=None,
+        user_data=None,
+    ):
+        calls.append(
+            {"region": region_name, "ami": ami_id, "az": availability_zone, "user_data": user_data}
+        )
         if fail_regions and region_name in fail_regions:
             raise aws_provider.AwsInsufficientCapacityError(
                 "InsufficientInstanceCapacity", aws_error_code="InsufficientInstanceCapacity"
@@ -225,7 +246,14 @@ def test_premium_snapshot_in_rate_and_launch(db_session, organization, gpu_type,
     # FREE plan: no discount; base 1_400_000 + premium 200_000 + 50GB storage (0) = 1_600_000.
     assert instance.hourly_rate_micros == 1_600_000
     assert instance.availability_zone == "eu-west-2a"
-    assert calls == [{"region": "eu-west-2", "ami": "ami-eu-west-2-resolved", "az": None}]
+    assert {k: v for k, v in calls[0].items() if k != "user_data"} == {
+        "region": "eu-west-2",
+        "ami": "ami-eu-west-2-resolved",
+        "az": None,
+    }
+    # Taskflow branding rides in as user data on every launch.
+    assert "Taskflow$:" in calls[0]["user_data"]
+    assert "TASKFLOW_WORKSPACE=" in calls[0]["user_data"]
 
 
 def test_premium_is_never_plan_discounted(db_session, organization, gpu_type, ssh_key, monkeypatch):
@@ -343,14 +371,20 @@ def test_ami_resolution_failure_skips_region(db_session, organization, gpu_type,
     _availability(db_session, gpu_type, good, premium=0)
     _availability(db_session, gpu_type, broken, premium=100_000)
 
-    real_resolve = ami_resolver.resolve_ami_from_ssm
+    real_ssm = ami_resolver.resolve_ami_from_ssm
+    real_describe = ami_resolver.resolve_ami_from_describe_images
 
-    def flaky(region_name):
-        if region_name == "eu-west-2":
-            raise ami_resolver.AmiResolutionError("SSM denied")
-        return real_resolve(region_name)
+    def _fail_or_real(fn):
+        # A region whose AMI cannot be resolved by EITHER path must be
+        # skipped — SSM denial alone falls back to DescribeImages in prod.
+        def wrapper(region_name, *args, **kwargs):
+            if region_name == "eu-west-2":
+                raise ami_resolver.AmiResolutionError("AMI resolution denied")
+            return fn(region_name, *args, **kwargs)
+        return wrapper
 
-    monkeypatch.setattr(ami_resolver, "resolve_ami_from_ssm", flaky)
+    monkeypatch.setattr(ami_resolver, "resolve_ami_from_ssm", _fail_or_real(real_ssm))
+    monkeypatch.setattr(ami_resolver, "resolve_ami_from_describe_images", _fail_or_real(real_describe))
     candidates = scheduler.select_region_candidates(db_session, gpu_type)
     assert [c.region_code for c in candidates] == ["us-east-1"]
 
@@ -481,7 +515,7 @@ def test_ami_resolved_once_then_cached(db_session, organization, gpu_type):
 
     calls: list = []
 
-    def counting_resolve(region_name):
+    def counting_resolve(region_name, ssm_parameter=None):
         calls.append(region_name)
         return f"ami-{region_name}-resolved"
 
@@ -520,7 +554,7 @@ def test_ami_cache_six_hours_still_fresh(db_session, organization, gpu_type):
 
     calls: list = []
 
-    def counting(region_name):
+    def counting(region_name, ssm_parameter=None):
         calls.append(region_name)
         return "ami-new"
 

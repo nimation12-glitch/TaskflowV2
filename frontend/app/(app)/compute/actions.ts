@@ -2,26 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { createRental, stopRental, startRental, terminateRental, topUpWallet } from "@/lib/compute-client";
-import type { LocationPreference } from "@/lib/compute-types";
+import { stopRental, startRental, terminateRental, topUpWallet } from "@/lib/compute-client";
 
-export async function createRentalAction(input: {
-  gpu_type_slug: string;
-  storage_gb: number;
-  ssh_key_id?: string;
-  workspace_id?: string;
-  payment_mode: "pay_as_you_go" | "booking";
-  booking_duration?: "day" | "week";
-  location_preference?: LocationPreference;
-  quantity?: number;
-}) {
-  const result = await createRental(input);
-  if ("checkout_url" in result) {
-    redirect(result.checkout_url);
-  }
-  revalidatePath("/compute");
-  return result;
-}
+// NOTE: GPU rentals are no longer started from a standalone panel — the GPU
+// is chosen in workspace setup (POST /workspaces with `gpu`), so the only
+// rental actions left here are the lifecycle controls the rental cards use.
 
 export async function stopRentalAction(id: string) {
   await stopRental(id);

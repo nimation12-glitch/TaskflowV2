@@ -14,8 +14,10 @@ Commercial model (product spec, AWS_GPU_Cloud_Catalogue_Final):
   (spec §11 safe-cost policy): seeded to the AWS GBP planning cost so the
   scheduler (Phase 3) refuses to provision a configuration whose projected
   infrastructure cost exceeds the plan the pricing was built on.
-- New SKUs seed enabled=False: nothing is rentable until a real regional AMI
-  is resolved (Phase 3, SSM) and the SKU is deliberately switched on.
+- Every GPU SKU ships enabled=True: the platform resolves a real regional
+  AMI at launch time (SSM first, ec2:DescribeImages fallback — see
+  app/compute/ami_resolver.py), so there is nothing to wait for and nothing
+  in the catalogue is a placeholder.
 
 IMPORTANT: models are only marked status=LIVE if their provider is actually
 configured (real API key present) AND commercial_use_reviewed=True. Nothing
@@ -34,7 +36,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.models.billing import Plan, PlanCode
 from app.models.catalog import AiModel, HostingMode, ModelEntitlement, ModelPricing, ModelStatus, Provider, ProviderKind
-from app.models.compute import GpuTier, GpuType
+from app.models.compute import GpuTier, GpuType, MachineImage
 from app.models.region import GpuRegionAvailability, GpuRegionStatus, Region, RegionStatus
 from app.models.workspace import StorageSize
 from app.providers.registry import configured_providers
@@ -309,6 +311,66 @@ STORAGE_SIZE_DEFAULTS = [
          prepaid_price_micros=624_990_000, available_plans=["MAX"]),
 ]
 
+# Machine-image catalogue (image catalogue inside the GPU catalogue). Every
+# row is a REAL public AWS Deep Learning AMI, verified to exist in all six
+# launch regions via ec2:DescribeImages. AWS does not charge for public
+# DLAMIs, so hourly_price_micros is 0 on every row: an image that is free on
+# AWS is free here. `name_pattern` is the DescribeImages name glob used to
+# resolve the regional AMI at launch (AMI ids are regional — spec §15).
+MACHINE_IMAGE_DEFAULTS = [
+    dict(
+        slug="pytorch-2-13-al2023",
+        display_name="PyTorch 2.13 · Amazon Linux 2023",
+        description="AWS Deep Learning OSS Nvidia Driver AMI with PyTorch 2.13 on Amazon Linux 2023 (x86_64). "
+                    "The platform default — the image the spec §15 launch profile is built on.",
+        name_pattern="Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.13 (Amazon Linux 2023)*",
+        is_default=True,
+        sort_order=10,
+    ),
+    dict(
+        slug="pytorch-2-14-al2023",
+        display_name="PyTorch 2.14 · Amazon Linux 2023",
+        description="Newest PyTorch build on Amazon Linux 2023 with the OSS Nvidia driver stack (x86_64).",
+        name_pattern="Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.14 (Amazon Linux 2023)*",
+        is_default=False,
+        sort_order=20,
+    ),
+    dict(
+        slug="pytorch-2-12-al2023",
+        display_name="PyTorch 2.12 · Amazon Linux 2023",
+        description="Previous-generation PyTorch build on Amazon Linux 2023 (x86_64) — pick it when a "
+                    "project pins an older torch version.",
+        name_pattern="Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.12 (Amazon Linux 2023)*",
+        is_default=False,
+        sort_order=30,
+    ),
+    dict(
+        slug="base-cuda-al2023",
+        display_name="Base CUDA · Amazon Linux 2023",
+        description="Minimal AWS Deep Learning Base AMI: CUDA + Nvidia drivers, no frameworks — bring your "
+                    "own environment (x86_64).",
+        name_pattern="Deep Learning Base OSS Nvidia Driver GPU AMI (Amazon Linux 2023)*",
+        is_default=False,
+        sort_order=40,
+    ),
+    dict(
+        slug="pytorch-2-13-ubuntu",
+        display_name="PyTorch 2.13 · Ubuntu 26.04",
+        description="PyTorch 2.13 Deep Learning AMI on Ubuntu 26.04 (x86_64) for Debian-based tooling.",
+        name_pattern="Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.13 (Ubuntu 26.04)*",
+        is_default=False,
+        sort_order=50,
+    ),
+    dict(
+        slug="base-cuda-ubuntu",
+        display_name="Base CUDA · Ubuntu Pro 24.04",
+        description="Minimal Base Deep Learning AMI on Ubuntu Pro 24.04: CUDA + drivers, no frameworks (x86_64).",
+        name_pattern="Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu Pro 24.04)*",
+        is_default=False,
+        sort_order=60,
+    ),
+]
+
 # Launch regions (spec §12). country_or_area drives the scheduler's location
 # preference filter (§13): Automatic / UK / Europe / North America / Asia.
 REGION_DEFAULTS = [
@@ -468,8 +530,8 @@ def run():
                 db.add(
                     GpuType(
                         aws_region=settings.aws_region,
-                        ami_id=None,  # never fabricate an AMI — Phase 3 resolves via SSM
-                        enabled=False,  # switched on deliberately, per SKU, after AMI resolution
+                        ami_id=None,  # never fabricate an AMI — resolved per region at launch
+                        enabled=True,  # every SKU is rentable: AMI resolves at launch time
                         max_runtime_hours=None,  # use the platform default cap
                         minimum_rental_hours=1,  # spec §20: 1-hour minimum at launch
                         **defaults,
@@ -479,9 +541,24 @@ def run():
             else:
                 for k, v in defaults.items():
                     setattr(row, k, v)
-                # Never leave a rentable SKU without a resolved real AMI.
-                if row.ami_id is None:
-                    row.enabled = False
+                # Every seeded SKU is rentable — the regional AMI is resolved
+                # live at launch (SSM, DescribeImages fallback), so a NULL
+                # legacy ami_id is no reason to keep a SKU switched off.
+                row.enabled = True
+        db.commit()
+
+        # --- Machine-image catalogue (free: AWS public DLAMIs) ---
+        for defaults in MACHINE_IMAGE_DEFAULTS:
+            existing = db.execute(
+                select(MachineImage).where(MachineImage.slug == defaults["slug"])
+            ).scalar_one_or_none()
+            if existing:
+                for k, v in defaults.items():
+                    setattr(existing, k, v)
+                existing.hourly_price_micros = 0  # free on AWS -> free here
+                existing.enabled = True
+            else:
+                db.add(MachineImage(hourly_price_micros=0, enabled=True, **defaults))
         db.commit()
 
         # --- Launch regions + the (SKU x region) premium matrix (§12, §19) ---
@@ -624,7 +701,8 @@ def run():
         plans_now = {p.code.value: (p.monthly_price_micros, p.monthly_credit_micros) for p in db.execute(select(Plan)).scalars()}
         print("Seed complete.")
         print(f"Plans in DB now: {plans_now}")
-        print(f"GPU catalogue: {total} SKUs seeded ({inserted} new, {total - inserted} updated in place), all enabled=False until a regional AMI is resolved.")
+        print(f"GPU catalogue: {total} SKUs seeded ({inserted} new, {total - inserted} updated in place), all enabled and rentable.")
+        print(f"Machine images: {len(MACHINE_IMAGE_DEFAULTS)} catalogue images seeded (all free — AWS public DLAMIs).")
         print(f"Regions: {len(region_rows)} launch regions seeded; regional matrix: {available_rows} offered + {not_offered_rows} N/A configurations.")
         print(f"Storage catalogue: {len(STORAGE_SIZE_DEFAULTS)} sizes seeded, all enabled=False until storage provisioning lands.")
         print(f"Configured providers: {sorted(configured) or '(none - set provider API keys in .env)'}")

@@ -8,7 +8,7 @@ from app.auth.internal import RequestContext, require_context
 from app.auth.maintenance import block_if_maintenance_unless_admin
 from app.compute.ami_resolver import AMI_DISPLAY_NAME, AMI_SSM_PATH
 from app.database import get_db
-from app.models.compute import GpuType
+from app.models.compute import GpuType, MachineImage
 from app.models.region import GpuRegionAvailability, GpuRegionStatus, Region, RegionStatus
 from app.services import gpu_rentals as gpu_rental_service
 from app.services import scheduler
@@ -24,11 +24,10 @@ def list_gpu_types(
     """
     Returns the full GPU catalogue for the catalogue UI.
 
-    Every seeded SKU is included, also ones not yet rentable: a SKU carries
-    enabled=False until its regional AMI is resolved (spec §15/§19 — nothing
-    is sold that isn't really provisionable). The frontend shows those as
-    "coming soon"; rental creation refuses them server-side regardless of
-    what the client saw here.
+    Every seeded SKU is rentable: the regional AMI is resolved live at launch
+    (SSM first, ec2:DescribeImages fallback — see app/compute/ami_resolver.py),
+    so nothing in the catalogue is a placeholder and nothing is "coming soon".
+    Rental creation still refuses disabled SKUs server-side as a safety net.
 
     Pricing per §24: fixed base price, plan-adjusted effective base, and the
     per-region service premium list so the UI can decompose the hourly price,
@@ -98,4 +97,55 @@ def list_gpu_types(
             },
         }
 
-    return {"gpu_types": [_serialize(gt) for gt in gpu_types]}
+    return {
+        "gpu_types": [_serialize(gt) for gt in gpu_types],
+        # The caller's plan as the catalogue renders allowances against it
+        # ("how many your plan allows" on a family's configurations).
+        "plan": {
+            "code": plan.code.value,
+            "display_name": plan.display_name,
+            "max_concurrent_rentals": plan.gpu_max_concurrent_rentals,
+            "max_storage_gb": plan.gpu_max_storage_gb,
+            "max_session_hours": plan.gpu_max_session_hours,
+            "booking_allowed": plan.gpu_booking_allowed,
+            "max_booking_days": plan.gpu_max_booking_days,
+            "tier": plan.gpu_max_tier.value if plan.gpu_max_tier else None,
+        },
+    }
+
+
+@router.get("/images")
+def list_machine_images(
+    ctx: RequestContext = Depends(require_context),
+    db: Session = Depends(get_db),
+):
+    """
+    The machine-image catalogue (browsed inside the GPU catalogue page).
+
+    Images ride along with a workspace (chosen in the workspace wizard — never
+    a separate flow). Pricing rule: an image that is free on AWS is free here —
+    every seeded row is a public AWS Deep Learning AMI, so hourly_price_micros
+    is 0 and the UI shows it as free. A paid image in the future would simply
+    seed a non-zero price; no code change needed.
+    """
+    images = list(
+        db.execute(
+            select(MachineImage)
+            .where(MachineImage.enabled == True)  # noqa: E712
+            .order_by(MachineImage.sort_order, MachineImage.display_name)
+        ).scalars()
+    )
+    return {
+        "images": [
+            {
+                "slug": image.slug,
+                "display_name": image.display_name,
+                "description": image.description,
+                "hourly_price_micros": image.hourly_price_micros,
+                "is_free": image.hourly_price_micros == 0,
+                "is_default": image.is_default,
+                "ssm_parameter": image.ssm_parameter,
+            }
+            for image in images
+        ]
+    }

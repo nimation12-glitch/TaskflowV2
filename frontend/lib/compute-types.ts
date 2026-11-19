@@ -21,6 +21,20 @@ export type MachineImage = {
   ssm_parameter: string;
 };
 
+/** One row of the machine-image catalogue (GET /compute/images). */
+export type ImageCatalogueEntry = {
+  slug: string;
+  display_name: string;
+  description: string | null;
+  hourly_price_micros: number;
+  /** Pricing rule: free on AWS => free with us. Drives the Free/Paid badge. */
+  is_free: boolean;
+  /** The image a workspace boots when the customer picks none. */
+  is_default: boolean;
+  /** Public SSM parameter the AMI id is resolved from at launch. */
+  ssm_parameter: string;
+};
+
 export type GpuSku = {
   slug: string;
   display_name: string;

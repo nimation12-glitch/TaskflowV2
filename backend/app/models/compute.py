@@ -75,6 +75,43 @@ class GpuType(UUIDPKMixin, TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
+class MachineImage(UUIDPKMixin, TimestampMixin, Base):
+    """
+    The machine-image catalogue (spec: image catalogue inside the GPU
+    catalogue). Every image is a real, public AWS Deep Learning AMI resolved
+    per region at launch — AWS does not charge for public DLAMIs, so the
+    platform does not either: hourly_price_micros is always 0 and the UI
+    shows the image as Free. An image is chosen WITH a workspace (it rides
+    along on Workspace.image_id), never as a separate boot flow.
+
+    `name_pattern` is the ec2:DescribeImages name glob used to resolve the
+    regional AMI for this image (AMI ids are regional — §15); `ssm_parameter`
+    is an optional public SSM parameter tried first when the image has one.
+    """
+
+    __tablename__ = "machine_images"
+
+    slug: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    # DescribeImages name glob, e.g. "Deep Learning OSS Nvidia Driver AMI GPU
+    # PyTorch 2.13 (Amazon Linux 2023)*".
+    name_pattern: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Optional public SSM parameter for this image (None = DescribeImages only).
+    ssm_parameter: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # AWS public DLAMIs are free, so every catalogue image is free with us.
+    # Kept as a column (always 0) so the UI can show the price honestly and a
+    # future paid image (e.g. a commercial AMI) needs no schema change.
+    hourly_price_micros: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Exactly one image is the platform default (the one a workspace gets when
+    # the customer picks none).
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
 class GpuInstanceStatus(str, enum.Enum):
     PENDING_PAYMENT = "PENDING_PAYMENT"  # booking mode only, before Stripe confirms — never provisioned yet
     PROVISIONING = "PROVISIONING"

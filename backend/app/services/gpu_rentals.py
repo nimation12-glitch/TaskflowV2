@@ -18,10 +18,11 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.compute.ami_resolver import AMI_DISPLAY_NAME
 from app.models.billing import Plan, PlanCode, Subscription
-from app.models.compute import BookingDuration, GpuInstance, GpuInstanceStatus, GpuType, PaymentMode, SshKey
+from app.models.compute import BookingDuration, GpuInstance, GpuInstanceStatus, GpuType, MachineImage, PaymentMode, SshKey
 from app.models.org import Organization
-from app.models.workspace import WorkspaceStatus
+from app.models.workspace import Workspace, WorkspaceStatus
 from app.services import credits as credits_service
 from app.services import scheduler
 from app.services import ssh_keys as ssh_key_service
@@ -148,6 +149,34 @@ def compute_hourly_rate_micros(gpu_type: GpuType, storage_gb: int, plan: Plan) -
     return discounted_base_rate_micros(gpu_type, plan) + storage_add_on_micros(storage_gb)
 
 
+def resolve_launch_image(db: Session, workspace: Optional[Workspace]) -> Optional[MachineImage]:
+    """
+    The machine image a launch boots: the workspace's chosen image when it
+    has one, otherwise the platform default. Returns None only when the
+    image catalogue is empty (caller then falls back to the SSM/DescribeImages
+    default path — a launch never blocks on a missing catalogue row).
+    """
+    if workspace is not None and workspace.image_id is not None:
+        image = db.get(MachineImage, workspace.image_id)
+        if image is not None and image.enabled:
+            return image
+    return db.execute(
+        select(MachineImage).where(MachineImage.is_default == True, MachineImage.enabled == True)  # noqa: E712
+    ).scalar_one_or_none()
+
+
+def _workspace_user_data(workspace: Optional[Workspace], gpu_type: GpuType, image_label: str, region: str) -> str:
+    """Branded user data for one machine (prompt + login banner) — compute/branding.py."""
+    from app.compute import branding
+
+    return branding.build_user_data(
+        workspace_name=workspace.name if workspace is not None else gpu_type.display_name,
+        region=region,
+        gpu_label=gpu_type.gpu_label,
+        image_name=image_label,
+    )
+
+
 def count_concurrent_rentals(db: Session, organization_id: uuid.UUID) -> int:
     return db.execute(
         select(GpuInstance.id).where(
@@ -272,6 +301,15 @@ def create_rental(
     region_code: Optional[str] = None
     premium_micros = 0
 
+    # The machine image this launch boots (image catalogue): images ride along
+    # with the workspace, so a workspace-attached launch uses its image and a
+    # standalone launch uses the platform default. Free either way — AWS
+    # public DLAMIs cost nothing (see MachineImage.hourly_price_micros).
+    image = resolve_launch_image(db, workspace)
+    image_pattern = image.name_pattern if image is not None else None
+    image_ssm_parameter = image.ssm_parameter if image is not None else None
+    image_label = image.display_name if image is not None else AMI_DISPLAY_NAME
+
     # Automatic region selection (spec §13). The (SKU x region) matrix seeded
     # by scripts/seed.py drives this; a SKU with no regional rows at all
     # (candidates is None) is legacy single-region data and keeps launching
@@ -281,6 +319,8 @@ def create_rental(
         gpu_type,
         location_preference=location_preference,
         require_storage=workspace is not None,
+        ami_name_pattern=image_pattern,
+        ami_ssm_parameter=image_ssm_parameter,
     )
     if candidates is not None and not candidates:
         raise NoRegionAvailableError(
@@ -351,6 +391,7 @@ def create_rental(
                                 "taskflow:gpu_instance_id": str(instance.id),
                                 "taskflow:organization_id": str(organization_id),
                             },
+                            user_data=_workspace_user_data(workspace, gpu_type, image_label, gpu_type.aws_region),
                         )
                     except aws_provider.AwsProviderError as exc:
                         instance.status = GpuInstanceStatus.FAILED
@@ -396,6 +437,7 @@ def create_rental(
                             },
                             region_name=candidate.region_code,
                             ami_id=candidate.ami_id,
+                            user_data=_workspace_user_data(workspace, gpu_type, image_label, candidate.region_code),
                         )
                     except aws_provider.AwsNotConfiguredError as exc:
                         # A configuration problem fails identically in every region —

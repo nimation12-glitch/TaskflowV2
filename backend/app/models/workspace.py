@@ -105,6 +105,14 @@ class Workspace(UUIDPKMixin, TimestampMixin, Base):
         PGUUID(as_uuid=True), ForeignKey("ssh_keys.id"), nullable=True
     )
 
+    # Machine image this workspace boots (image catalogue: images ride along
+    # with the workspace, they are never a separate flow). NULL = the platform
+    # default image. Snapshotted at creation; the image's regional AMI is
+    # resolved at GPU launch time (AMI ids are regional — spec §15).
+    image_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("machine_images.id"), nullable=True
+    )
+
     billing_mode: Mapped[StorageBillingMode] = mapped_column(
         Enum(StorageBillingMode, name="storagebillingmode"),
         default=StorageBillingMode.HOURLY,

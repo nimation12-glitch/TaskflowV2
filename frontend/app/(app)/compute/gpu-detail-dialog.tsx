@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,7 +46,6 @@ export function GpuDetailDialog({
   open,
   onOpenChange,
   onSelect,
-  onConfirm,
 }: {
   sku: GpuSku;
   plan: PlanCode;
@@ -53,10 +53,8 @@ export function GpuDetailDialog({
   familySkus: GpuSku[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Inspect another configuration of the same family (doesn't touch the launch panel). */
+  /** Inspect another configuration of the same family. */
   onSelect: (slug: string) => void;
-  /** Apply the viewed SKU to the launch panel and close the dialog. */
-  onConfirm: () => void;
 }) {
   const limits = PLAN_LIMITS[plan];
   const fromPrice = priceBreakdown(sku, 0, plan, fromPremiumMicros(sku)).totalHourlyMicros;
@@ -120,11 +118,7 @@ export function GpuDetailDialog({
           <DialogTitle className="flex flex-wrap items-center gap-2">
             {sku.display_name}
             {sku.tier === "ULTRA" && <Badge variant="default">Ultra</Badge>}
-            {sku.enabled ? (
-              <Badge variant="success">Available now</Badge>
-            ) : (
-              <Badge variant="outline">Coming soon</Badge>
-            )}
+            <Badge variant="success">Available now</Badge>
           </DialogTitle>
           <DialogDescription>
             {sku.gpu_count}× {sku.gpu} · {sku.vram_gb}GB VRAM · {sku.vcpu} vCPU · {sku.ram_gb}GB RAM
@@ -178,7 +172,9 @@ export function GpuDetailDialog({
                   )}
                 </div>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Every GPU in an order shares storage, region and workspace.
+                  Your {plan} plan allows {limits.concurrentRentals} concurrent GPU
+                  {limits.concurrentRentals === 1 ? "" : "s"} · storage up to {limits.maxStorageGb} GB per GPU. Every
+                  GPU in an order shares storage, region and workspace.
                 </p>
               </div>
             </div>
@@ -197,7 +193,6 @@ export function GpuDetailDialog({
                       <span className="ml-1.5 font-mono-data text-muted-foreground">
                         {formatGbp(priceBreakdown(s, 0, plan, fromPremiumMicros(s)).totalHourlyMicros)}/hr
                       </span>
-                      {!s.enabled && <span className="ml-1 text-muted-foreground">· soon</span>}
                     </button>
                   ))}
                 </div>
@@ -306,9 +301,10 @@ export function GpuDetailDialog({
             <Cpu className="mr-1 inline h-3.5 w-3.5" />
             from <span className="font-mono-data font-semibold text-foreground">{formatGbp(fromPrice)}/hr</span>
           </span>
-          <Button onClick={onConfirm} disabled={!sku.enabled}>
-            {sku.enabled ? "Use this GPU" : "Coming soon"}
-          </Button>
+          <span className="hidden text-xs text-muted-foreground sm:inline">Chosen in workspace setup</span>
+          <Link href="/compute?tab=workspaces">
+            <Button>Rent this GPU</Button>
+          </Link>
         </DialogFooter>
       </DialogContent>
     </Dialog>

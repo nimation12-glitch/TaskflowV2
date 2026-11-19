@@ -9,7 +9,9 @@ Required IAM policy (least privilege, scoped to the launch regions —
 see infra/aws-iam-policy.json for a ready-to-attach JSON document):
   ec2:RunInstances, ec2:StopInstances, ec2:StartInstances,
   ec2:TerminateInstances, ec2:DescribeInstances, ec2:DescribeImages,
-  ec2:CreateTags, ec2:ImportKeyPair, ec2:DeleteKeyPair
+  ec2:CreateTags, ec2:ImportKeyPair, ec2:DeleteKeyPair,
+  ec2:DescribeVpcs, ec2:DescribeSecurityGroups, ec2:CreateSecurityGroup,
+  ec2:AuthorizeSecurityGroupIngress
   ssm:GetParameter (public Deep Learning AMI parameters — regional AMI
   resolution, see app/compute/ami_resolver.py)
 
@@ -17,11 +19,24 @@ Do NOT attach broader permissions than this list.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from app.config import get_settings
 from app.models.compute import GpuType
+
+logger = logging.getLogger("taskflow.aws_provider")
+
+# The security group every workspace GPU launches into. AWS's default security
+# group allows NO inbound traffic from the internet, so without this group an
+# instance would boot with a public IP that nothing can SSH into — the machine
+# would bill the customer while being unreachable. One group per region
+# (security groups are regional, like key pairs), created lazily on first
+# launch in that region. Free of charge.
+SSH_SECURITY_GROUP_NAME = "taskflow-ssh-access"
+SSH_SECURITY_GROUP_DESCRIPTION = "TaskFlow workspace SSH access (TCP 22)"
+SSH_INGRESS_PORT = 22
 
 
 class AwsProviderError(Exception):
@@ -140,6 +155,97 @@ def delete_ssh_key(aws_key_pair_name: str, region_name: Optional[str] = None) ->
         raise _wrap_client_error(exc, f"Failed to delete AWS key pair '{aws_key_pair_name}'") from exc
 
 
+def ensure_ssh_security_group(region_name: Optional[str] = None) -> str:
+    """
+    Returns the id of the per-region TaskFlow SSH security group, creating it
+    (with TCP 22 open to the internet) on first use.
+
+    Idempotent and safe to call on every launch: an existing group is reused,
+    a concurrent create is treated as success, and an already-present ingress
+    rule is ignored. Security groups are regional resources, so the lookup and
+    creation both happen in the launch region.
+
+    Raises AwsProviderError when the group cannot exist (no default VPC, or
+    the IAM policy lacks CreateSecurityGroup/AuthorizeSecurityGroupIngress).
+    The caller must NOT launch without it — an unreachable-but-billable
+    instance is the failure mode this exists to prevent.
+    """
+    client = _client(region_name)
+
+    def _find() -> Optional[str]:
+        try:
+            response = client.describe_security_groups(
+                Filters=[{"Name": "group-name", "Values": [SSH_SECURITY_GROUP_NAME]}]
+            )
+        except Exception as exc:
+            raise _wrap_client_error(exc, "Failed to look up the TaskFlow SSH security group") from exc
+        for group in response.get("SecurityGroups", []):
+            if group.get("GroupName") == SSH_SECURITY_GROUP_NAME:
+                return group["GroupId"]
+        return None
+
+    existing = _find()
+    if existing:
+        return existing
+
+    # The group must live in the VPC the instance will launch into — the
+    # account's default VPC (RunInstances with no subnet uses it too).
+    try:
+        vpcs = client.describe_vpcs(Filters=[{"Name": "is-default", "Values": ["true"]}]).get("Vpcs", [])
+    except Exception as exc:
+        raise _wrap_client_error(exc, "Failed to look up the default VPC") from exc
+    if not vpcs:
+        raise AwsProviderError(
+            f"No default VPC in region '{region_name or get_settings().aws_region}' — "
+            "cannot create the SSH security group, refusing to launch an unreachable instance"
+        )
+    vpc_id = vpcs[0]["VpcId"]
+
+    from botocore.exceptions import ClientError
+
+    try:
+        response = client.create_security_group(
+            GroupName=SSH_SECURITY_GROUP_NAME,
+            Description=SSH_SECURITY_GROUP_DESCRIPTION,
+            VpcId=vpc_id,
+        )
+        group_id = response["GroupId"]
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code not in ("InvalidGroup.Duplicate", "InvalidGroupId.NotFound"):
+            raise _wrap_client_error(exc, "Failed to create the SSH security group") from exc
+        # Lost a creation race — reuse whichever group now exists.
+        existing = _find()
+        if not existing:
+            raise _wrap_client_error(exc, "Failed to create the SSH security group") from exc
+        return existing
+
+    try:
+        client.authorize_security_group_ingress(
+            GroupId=group_id,
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": SSH_INGRESS_PORT,
+                    "ToPort": SSH_INGRESS_PORT,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "SSH"}],
+                }
+            ],
+        )
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code != "InvalidPermission.Duplicate":
+            # A group without port 22 open is exactly the unreachable-instance
+            # case — clean up rather than launch into a dead group.
+            try:
+                client.delete_security_group(GroupId=group_id)
+            except Exception:  # noqa: BLE001 - best effort, logged below
+                logger.warning("Could not roll back partially-created group %s", group_id)
+            raise _wrap_client_error(exc, "Failed to open SSH ingress on the security group") from exc
+
+    return group_id
+
+
 def launch_instance(
     gpu_type: GpuType,
     storage_gb: int,
@@ -149,6 +255,7 @@ def launch_instance(
     region_name: Optional[str] = None,
     ami_id: Optional[str] = None,
     availability_zone: Optional[str] = None,
+    user_data: Optional[str] = None,
 ) -> tuple[str, str, Optional[str]]:
     """
     Wraps ec2:RunInstances with a gp3 EBS root volume sized to storage_gb,
@@ -215,6 +322,15 @@ def launch_instance(
         BlockDeviceMappings=block_device_mappings,
         TagSpecifications=tag_specifications,
     )
+    # SSH must be reachable: resolve/create the shared SSH security group
+    # BEFORE RunInstances so a failure here costs nothing. Launching without
+    # it would boot a public IP with port 22 closed — a billable machine the
+    # customer can never connect to.
+    run_params["SecurityGroupIds"] = [ensure_ssh_security_group(region_name)]
+    # Taskflow branding (branded prompt + login banner) rides in as user data
+    # and is written to disk while the machine boots — see compute/branding.py.
+    if user_data:
+        run_params["UserData"] = user_data
     if availability_zone:
         run_params["Placement"] = {"AvailabilityZone": availability_zone}
 
