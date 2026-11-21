@@ -76,7 +76,7 @@ export default async function BillingPage() {
 
       <h2 className="mt-10 text-sm font-medium text-muted-foreground">Plan</h2>
       <p className="mt-1 text-xs text-muted-foreground">
-        Changing plans opens secure Stripe checkout — nothing changes until payment is confirmed.
+        Changing plans opens Taskflow's secure checkout — nothing changes until payment is confirmed.
       </p>
       <div className="mt-3">
         <PlanTiers currentPlan={currentPlan} />

@@ -1,26 +1,26 @@
 import Link from "next/link";
-import { LifeBuoy, Mail, BookOpen, Cpu, CreditCard, KeyRound } from "lucide-react";
+import { LifeBuoy, Mail, BookOpen, Cpu, CreditCard, FolderOpen } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 
 const TOPICS = [
-  { icon: Cpu, title: "Renting a GPU", href: "/compute", body: "Pick a tier, storage, and payment mode from the Compute page." },
+  { icon: Cpu, title: "Renting a GPU", href: "/compute", body: "Browse the catalogue, then pick the GPU in a workspace's setup." },
   { icon: CreditCard, title: "Billing & plans", href: "/billing", body: "Compare plans, see your rates, and manage your subscription." },
-  { icon: KeyRound, title: "API keys", href: "/api-keys", body: "Create, pause, or revoke API keys for programmatic access." },
+  { icon: FolderOpen, title: "Workspaces", href: "/compute?tab=workspaces", body: "Create a machine, attach a key, and connect over SSH." },
 ];
 
 const FAQ = [
   {
-    q: "How do I connect to a running rental?",
-    a: "Once a rental's status is Running, its card on the Compute page shows an SSH command you can copy directly — you'll need an SSH key first. Keys are created with workspaces: open the Workspaces tab on the Compute page, create one, and the wizard generates (or lets you attach) the key.",
+    q: "How do I connect to a running workspace?",
+    a: "Open the Workspaces tab on the Compute page and press Connect on the card. It shows the SSH command and your machine's public IP. Keys are created during workspace setup — the wizard generates one for you, or you can attach a key you already have.",
   },
   {
     q: "What happens if my wallet runs out mid-rental?",
     a: "The rental auto-stops rather than terminating — your instance and its data are preserved, just paused. Top up from the Compute page and start it again.",
   },
   {
-    q: "Can I change my plan without losing my rentals?",
-    a: "Yes — upgrading or downgrading from the Billing page doesn't affect running rentals. If a downgrade puts you over your new concurrent-rental limit, stop or terminate one to get back under it.",
+    q: "Can I change my plan without losing my workspaces?",
+    a: "Yes — upgrading or downgrading from the Billing page doesn't affect running workspaces or their storage. If a downgrade puts you over your new concurrent-GPU limit, stop one to get back under it.",
   },
 ];
 
@@ -76,7 +76,11 @@ export default function HelpPage() {
 
       <p className="mt-6 flex items-center gap-1.5 text-xs text-muted-foreground">
         <BookOpen className="h-3.5 w-3.5" />
-        Looking for the public docs? See <Link href="/docs" className="text-primary hover:underline">/docs</Link>.
+        Questions about a charge? See{" "}
+        <Link href="/billing" className="text-primary hover:underline">
+          Billing
+        </Link>
+        .
       </p>
     </div>
   );

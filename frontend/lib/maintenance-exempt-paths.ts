@@ -7,11 +7,15 @@
  * expiry or on a new device).
  *
  * Deliberately NOT exempt: /signup (no reason to let new orgs form while the
- * product is down), /docs, /invite/[token], and everything in /dashboard —
- * the spec asks to block navigation to "the rest of the app", and none of
- * those are needed for account recovery.
+ * product is down), /invite/[token], and everything in /dashboard — the spec
+ * asks to block navigation to "the rest of the app", and none of those are
+ * needed for account recovery.
+ *
+ * /checkout IS exempt: a card may already be in flight when the toggle gets
+ * flipped, and a payment page that turns into a maintenance splash mid-charge
+ * is the one route where being unreachable actively costs money.
  */
-const EXEMPT_PREFIXES = ["/login", "/forgot-password", "/reset-password", "/api/auth", "/api/password-reset"];
+const EXEMPT_PREFIXES = ["/login", "/forgot-password", "/reset-password", "/api/auth", "/api/password-reset", "/checkout"];
 
 export function isMaintenanceExempt(pathname: string): boolean {
   return EXEMPT_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));

@@ -99,10 +99,36 @@ def get_or_create_stripe_customer(db: Session, org: Organization, email: str) ->
     return customer["id"]
 
 
+# --- In-app (embedded) Checkout -----------------------------------------
+#
+# Payments never leave Taskflow: the customer stays on our own branded
+# /checkout page and Stripe's secure card form is embedded inside it. So the
+# backend hands the frontend OUR url — carrying the session id — instead of
+# Stripe's hosted page, and Stripe redirects back to /checkout/complete when
+# the payment finishes. `ui_mode="embedded_page"` + `redirect_on_completion`
+# are what make that possible; both were validated against the Stripe API
+# before this code was written (payment and subscription modes).
+#
+# NOTE: the success_url/cancel_url pair is deliberately gone here — those
+# belong to Stripe's hosted page. Embedded Checkout takes one return_url.
+
+_EMBEDDED_UI_MODE = "embedded_page"
+
+
+def _embedded_return_url() -> str:
+    """Where Stripe sends the customer back to (it appends ?cs=<session id>)."""
+    return f"{settings.app_base_url}/checkout/complete"
+
+
+def _app_checkout_url(session) -> str:
+    """Our own checkout page for this session — never Stripe's hosted URL."""
+    return f"{settings.app_base_url}/checkout?cs={session['id']}"
+
+
 def create_subscription_checkout_session(
     db: Session, org: Organization, email: str, plan_code: PlanCode
 ) -> str:
-    """Returns a Stripe Checkout URL for a Pro/Ultra/Max subscription."""
+    """Returns our in-app checkout URL for a Pro/Ultra/Max subscription."""
     client = _client()
     attr = SUBSCRIPTION_PRICE_ATTRS.get(plan_code)
     price_id = getattr(settings, attr) if attr else ""
@@ -114,10 +140,11 @@ def create_subscription_checkout_session(
 
     session = client.checkout.Session.create(
         mode="subscription",
+        ui_mode=_EMBEDDED_UI_MODE,
+        redirect_on_completion="always",
+        return_url=_embedded_return_url(),
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{settings.app_base_url}/dashboard/billing?checkout=success",
-        cancel_url=f"{settings.app_base_url}/dashboard/billing?checkout=cancelled",
         custom_text={"submit": {"message": checkout_text["submit"]}},
         metadata={"organization_id": str(org.id), "plan": plan_code.value, "purchase_type": "subscription"},
         subscription_data={
@@ -125,7 +152,7 @@ def create_subscription_checkout_session(
             "metadata": {"organization_id": str(org.id), "plan": plan_code.value},
         },
     )
-    return session["url"]
+    return _app_checkout_url(session)
 
 
 def create_credit_purchase_checkout_session(
@@ -143,10 +170,11 @@ def create_credit_purchase_checkout_session(
 
     session = client.checkout.Session.create(
         mode="payment",
+        ui_mode=_EMBEDDED_UI_MODE,
+        redirect_on_completion="always",
+        return_url=_embedded_return_url(),
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{settings.app_base_url}/dashboard/billing?checkout=success",
-        cancel_url=f"{settings.app_base_url}/dashboard/billing?checkout=cancelled",
         custom_text={
             "submit": {"message": f"Adds £{amount_micros / 1_000_000:g} of credit to your workspace — spend it on GPU compute rentals."}
         },
@@ -157,7 +185,7 @@ def create_credit_purchase_checkout_session(
             "amount_micros": str(amount_micros),
         },
     )
-    return session["url"]
+    return _app_checkout_url(session)
 
 
 def _existing_stripe_customer_id(db: Session, org: Organization) -> str | None:
@@ -205,9 +233,10 @@ def create_wallet_topup_checkout_session(db: Session, org: Organization, amount_
 
     session_kwargs: dict = dict(
         mode="payment",
+        ui_mode=_EMBEDDED_UI_MODE,
+        redirect_on_completion="always",
+        return_url=_embedded_return_url(),
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{settings.app_base_url}/dashboard/compute?checkout=success",
-        cancel_url=f"{settings.app_base_url}/dashboard/compute?checkout=cancelled",
         custom_text={
             "submit": {"message": f"Adds £{amount_micros / 1_000_000:g} of wallet credit — pays for GPU compute rentals and never expires."}
         },
@@ -225,7 +254,7 @@ def create_wallet_topup_checkout_session(db: Session, org: Organization, amount_
         session_kwargs["customer_creation"] = "always"
 
     session = client.checkout.Session.create(**session_kwargs)
-    return session["url"]
+    return _app_checkout_url(session)
 
 
 def create_gpu_booking_checkout_session(
@@ -284,6 +313,9 @@ def create_gpu_booking_checkout_session(
 
     session_kwargs: dict = dict(
         mode="payment",
+        ui_mode=_EMBEDDED_UI_MODE,
+        redirect_on_completion="always",
+        return_url=_embedded_return_url(),
         line_items=[
             {
                 "price_data": {
@@ -297,8 +329,6 @@ def create_gpu_booking_checkout_session(
                 "quantity": quantity,
             }
         ],
-        success_url=f"{settings.app_base_url}/dashboard/compute?checkout=success",
-        cancel_url=f"{settings.app_base_url}/dashboard/compute?checkout=cancelled",
         custom_text={
             "submit": {"message": "You're booking a fixed rental period — the total is charged now and the instance auto-terminates when it ends."}
         },
@@ -311,7 +341,7 @@ def create_gpu_booking_checkout_session(
         session_kwargs["customer_creation"] = "always"
 
     session = client.checkout.Session.create(**session_kwargs)
-    return session["url"]
+    return _app_checkout_url(session)
 
 
 def create_billing_portal_session(db: Session, org: Organization) -> str:

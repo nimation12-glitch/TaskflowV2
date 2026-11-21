@@ -36,9 +36,9 @@ const CAPABILITIES = [
 ];
 
 const HOW_IT_WORKS = [
-  { step: "1", title: "Add an SSH key", body: "Paste your public key once — it's how you'll connect to every rental after this." },
-  { step: "2", title: "Pick a GPU and pay how you like", body: "Choose a configuration and storage size, then rent by the hour from your wallet or book a fixed period upfront. You pick the GPU; the best region is picked for you." },
-  { step: "3", title: "SSH in and get to work", body: "Your instance boots in 1-2 minutes. Copy the connection string and you're on the box." },
+  { step: "1", title: "Create a workspace", body: "Name it, pick its storage, choose the GPU and the machine image, and let the wizard generate your SSH key. A workspace is your machine." },
+  { step: "2", title: "Taskflow boots it on AWS", body: "Create and the platform launches the instance in the best region for that GPU, with the price broken down before you commit. Billing starts once it's running." },
+  { step: "3", title: "SSH in and get to work", body: "Hit Connect on the workspace card for the command and public IP. Your storage, image and key persist between GPU sessions." },
 ];
 
 const USE_CASES = ["Model fine-tuning & training", "Stable Diffusion & image generation", "Data processing pipelines", "3D & game rendering", "Academic research"];
@@ -54,7 +54,7 @@ const FAQ = [
   },
   {
     q: "What happens when a booking expires?",
-    a: "You'll see a warning starting an hour before expiry. When the period ends, the instance auto-terminates. Extending a booking is coming soon.",
+    a: "You'll see a warning starting an hour before expiry. When the period ends, the instance auto-terminates and stops billing. Your workspace, storage and SSH key are kept, so you can start it again whenever you like.",
   },
   {
     q: "How is storage priced?",
@@ -99,9 +99,9 @@ export default function LandingPage() {
             <Link href="/signup">
               <Button className="px-6 py-3 text-base">Create free account</Button>
             </Link>
-            <Link href="/docs">
+            <Link href="/login">
               <Button variant="secondary" className="px-6 py-3 text-base">
-                Read the docs
+                Sign in
               </Button>
             </Link>
           </div>
@@ -244,9 +244,9 @@ export default function LandingPage() {
           <Link href="/privacy" className="hover:text-foreground">
             Privacy Policy
           </Link>
-          <Link href="/docs" className="hover:text-foreground">
-            Docs
-          </Link>
+          <a href="mailto:support@taskflow.web-agent.org" className="hover:text-foreground">
+            Support
+          </a>
         </div>
       </footer>
     </div>

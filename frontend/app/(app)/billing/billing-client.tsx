@@ -98,7 +98,7 @@ export function PlanTiers({ currentPlan }: { currentPlan: PlanCode }) {
                     title={`${isUpgrade ? "Upgrade" : "Downgrade"} to ${tier.name}`}
                     description={
                       <>
-                        You'll be redirected to secure Stripe checkout to confirm the change. Your plan updates as
+                        You'll confirm the change in Taskflow's secure checkout. Your plan updates as
                         soon as payment completes
                         {isUpgrade
                           ? `, including your higher concurrent-rental limit immediately. GPU time is billed from your wallet either way.`

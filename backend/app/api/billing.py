@@ -67,6 +67,77 @@ def checkout_credits(
     return {"checkout_url": url}
 
 
+# --- In-app (embedded) Checkout -------------------------------------------
+#
+# The customer never leaves Taskflow: Stripe's secure card form is embedded
+# inside our own branded /checkout page. That page needs three things this
+# endpoint hands over — the client secret to mount the form, a summary to
+# render next to it, and nothing else.
+#
+# A session id alone must not be a capability: every response is scoped to
+# the caller's organization, and a foreign or malformed id reports 404 so we
+# never confirm the existence of somebody else's checkout.
+
+
+@router.get("/checkout/session")
+def get_checkout_session(
+    session_id: str,
+    ctx: RequestContext = Depends(require_context),
+):
+    import stripe
+
+    if not session_id.startswith("cs_"):
+        raise HTTPException(400, "Invalid checkout session id")
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+    except stripe.InvalidRequestError:
+        raise HTTPException(404, "Checkout session not found")
+
+    if (session.get("metadata") or {}).get("organization_id") != str(ctx.organization_id):
+        raise HTTPException(404, "Checkout session not found")
+
+    try:
+        line_items = stripe.checkout.Session.list_line_items(session_id, limit=10)
+        raw_items = line_items.get("data", [])
+    except stripe.StripeError:
+        raw_items = []
+
+    # Stripe quotes in pence; the whole product speaks micro-GBP (1 GBP =
+    # 1_000_000 micros = 100 pence, so one penny is 10_000 micros).
+    items = [
+        {
+            "name": item.get("description") or "Purchase",
+            "amount_micros": int(item.get("amount_total") or 0) * 10_000,
+        }
+        for item in raw_items
+    ]
+
+    metadata = session.get("metadata") or {}
+    purchase_type = metadata.get("purchase_type", "")
+    if purchase_type == "subscription":
+        title = f"Taskflow {metadata.get('plan', '')} plan".strip()
+    elif purchase_type == "wallet_topup":
+        title = "Top up your GPU wallet"
+    elif purchase_type == "credit_purchase":
+        title = "Buy credit"
+    else:
+        title = items[0]["name"] if items else "Taskflow purchase"
+
+    return {
+        "session_id": session_id,
+        "client_secret": session.get("client_secret"),
+        "mode": session.get("mode"),
+        "status": session.get("status"),
+        "payment_status": session.get("payment_status"),
+        "currency": session.get("currency"),
+        "total_micros": int(session.get("amount_total") or 0) * 10_000,
+        "title": title,
+        "items": items,
+        "purchase_type": purchase_type,
+        "plan": metadata.get("plan"),
+    }
+
+
 @router.post("/portal")
 def billing_portal(
     ctx: RequestContext = Depends(require_context),

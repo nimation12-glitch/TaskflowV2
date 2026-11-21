@@ -4,7 +4,9 @@ import { NextResponse } from "next/server";
 // Every top-level route inside the (app) route group — kept as an explicit
 // list rather than "everything not public" so a new public page never
 // accidentally ends up behind auth just because someone forgot to exempt it.
-const PROTECTED_PREFIXES = ["/dashboard", "/compute", "/billing", "/models", "/team", "/api-keys", "/account", "/admin", "/help"];
+// /checkout is outside that group but is still auth-gated: it loads the
+// caller's own payment session from the backend.
+const PROTECTED_PREFIXES = ["/dashboard", "/compute", "/billing", "/team", "/account", "/admin", "/help", "/checkout"];
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;

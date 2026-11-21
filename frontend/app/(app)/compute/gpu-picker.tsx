@@ -1,7 +1,9 @@
 "use client";
 
-import { AlertTriangle, Clock, Globe, MapPin } from "lucide-react";
+import { AlertTriangle, Clock, Globe, MapPin, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { TopUpDialog } from "@/components/dashboard/top-up-dialog";
 import { formatGbp } from "@/lib/utils";
 import {
   estimatedHoursRemaining,
@@ -67,6 +69,9 @@ export type GpuAssessment = {
   quantity: number;
   /** Non-null = this configuration cannot launch right now (why). */
   blockReason: string | null;
+  /** >0 only when the wallet is short of the launch reserve — renders the
+   *  explicit "top up" prompt instead of a bare error. */
+  shortfallMicros: number;
 };
 
 type AssessArgs = {
@@ -102,6 +107,9 @@ export function assessGpu({ gpuTypes, value, plan, concurrentUsed, walletBalance
   const hoursLeft = price ? estimatedHoursRemaining(walletBalanceMicros, hourlyTotalMicros) : null;
 
   let blockReason: string | null = null;
+  /** Positive when the wallet can't cover the launch reserve — drives the
+   *  explicit "top up" prompt so the user is never left guessing why. */
+  let shortfallMicros = 0;
   if (sku) {
     if (!pref.available) {
       blockReason = "Not offered in the selected location — try another location or Automatic.";
@@ -110,7 +118,10 @@ export function assessGpu({ gpuTypes, value, plan, concurrentUsed, walletBalance
     } else if (concurrentUsed >= limits.concurrentRentals) {
       blockReason = "You're at your plan's concurrent GPU limit — stop or terminate one first.";
     } else if (value.paymentMode === "pay_as_you_go" && walletBalanceMicros < reserveNeededMicros) {
-      blockReason = "Your wallet balance doesn't cover the required reserve at this rate.";
+      shortfallMicros = reserveNeededMicros - walletBalanceMicros;
+      blockReason = `Your wallet is ${formatGbp(shortfallMicros)} short of the ${formatGbp(
+        reserveNeededMicros
+      )} reserve this launch needs. Top up to continue.`;
     }
   }
 
@@ -126,6 +137,7 @@ export function assessGpu({ gpuTypes, value, plan, concurrentUsed, walletBalance
     maxQuantity,
     quantity,
     blockReason,
+    shortfallMicros,
   };
 }
 
@@ -430,10 +442,34 @@ export function GpuPicker({
           </div>
 
           {a.blockReason && (
-            <p className="flex items-center gap-1.5 text-sm text-warning">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              {a.blockReason}
-            </p>
+            <div
+              className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+                a.shortfallMicros > 0
+                  ? "border-warning/40 bg-warning/10 text-warning"
+                  : "border-warning/30 bg-warning/5 text-warning"
+              }`}
+            >
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p>{a.blockReason}</p>
+                {a.shortfallMicros > 0 && (
+                  <div className="mt-2">
+                    <TopUpDialog
+                      title="Top up to start this GPU"
+                      description={`Your wallet needs ${formatGbp(
+                        a.reserveNeededMicros
+                      )} available to cover the launch reserve. Pick an amount to top up and continue.`}
+                      trigger={
+                        <Button size="sm">
+                          <Plus className="h-3.5 w-3.5" />
+                          Top up {formatGbp(Math.max(a.shortfallMicros, 10_000_000))}
+                        </Button>
+                      }
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </>
       )}
