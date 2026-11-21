@@ -76,7 +76,7 @@ function InviteDialog({ disabled }: { disabled: boolean }) {
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              {role === "MEMBER" ? "Can use the API and view usage." : "Can also manage the team and billing."}
+              {role === "MEMBER" ? "Can rent GPUs and view usage." : "Can also manage the team and billing."}
             </p>
           </div>
           <DialogFooter>
@@ -184,7 +184,7 @@ export function TeamClient({
                     </DialogTrigger>
                   }
                   title="Remove this member?"
-                  description="They'll immediately lose access to this workspace, including any API keys tied to their account."
+                  description="They'll immediately lose access to this workspace, including everything stored on it."
                   confirmLabel="Remove member"
                   variant="danger"
                   pending={pending}

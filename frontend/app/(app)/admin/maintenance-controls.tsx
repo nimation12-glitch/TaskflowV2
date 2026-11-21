@@ -44,8 +44,8 @@ export function MaintenanceControls({
 
   function handleToggle() {
     if (!enabled) {
-      // Turning ON — this immediately blocks GPU rentals and the AI API for
-      // every non-admin user, so it always goes through a confirm dialog.
+      // Turning ON — this immediately blocks GPU rentals for every non-admin
+      // user, so it always goes through a confirm dialog.
       setConfirmOpen(true);
     } else {
       save(false);
@@ -60,7 +60,7 @@ export function MaintenanceControls({
             <div>
               <CardTitle className="text-foreground">Maintenance mode</CardTitle>
               <CardDescription>
-                Blocks the AI API and GPU compute for everyone except admins. Non-admins see a full-page splash
+                Blocks GPU compute for everyone except admins. Non-admins see a full-page splash
                 site-wide.
               </CardDescription>
             </div>
@@ -102,9 +102,9 @@ export function MaintenanceControls({
 
           <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            As an admin, your own GPU rental calls will keep working while this is on. The AI Model Gateway
-            (<code className="rounded bg-muted px-1 py-0.5">/v1/*</code>) has no admin exception on the backend and
-            will still return 503 for everyone, including you.
+            As an admin, your own GPU rentals keep working while this is on. The backend&apos;s{" "}
+            <code className="rounded bg-muted px-1 py-0.5">/v1/*</code> endpoints have no admin exception and will
+            still return 503 for everyone, including you.
           </p>
         </CardContent>
       </Card>
@@ -118,7 +118,7 @@ export function MaintenanceControls({
             </DialogTitle>
             <DialogDescription asChild>
               <div>
-                This immediately blocks GPU rentals and the AI API for every non-admin user, and shows them the
+                This immediately blocks GPU rentals for every non-admin user, and shows them the
                 message below instead of the app. Only turn this on if you mean to right now.
               </div>
             </DialogDescription>

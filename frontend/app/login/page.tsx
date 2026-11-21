@@ -22,7 +22,7 @@ export default async function LoginPage({ searchParams }: { searchParams: { call
             <LogoWordmark size={28} />
           </Link>
           <h1 className="mt-5 text-xl font-semibold">Sign in to TaskFlow</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Access your dashboard, API keys, and usage.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Access your workspaces, GPU rentals, and usage.</p>
 
           {searchParams.error && (
             <p className="mt-4 rounded-md bg-danger/10 border border-danger/30 px-3 py-2 text-sm text-danger">

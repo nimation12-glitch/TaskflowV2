@@ -242,7 +242,7 @@ export function RentalsList({
       <EmptyState
         icon={Cpu}
         title="No GPU rentals yet"
-        description="Pick a GPU from the catalogue above, then rent it by the hour — it'll show up here once provisioning starts."
+        description="Rentals start from a workspace — create one in the Workspaces tab, or start a GPU on an existing workspace. Anything running shows up here."
       />
     );
   }
